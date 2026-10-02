@@ -1,0 +1,8 @@
+/*
+ * Middle-Drag Gestures
+ *
+ * The extension runs entirely in the background (no Shell UI), so the only
+ * themed surface is the preferences window, which is built from libadwaita
+ * widgets that already follow the system theme.  Keep custom CSS here for
+ * anything that must be adjusted later.
+ */

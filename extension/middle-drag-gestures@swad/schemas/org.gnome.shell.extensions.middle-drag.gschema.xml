@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <enum id="org.gnome.shell.extensions.middle-drag.Action">
+    <value nick="none" value="0"/>
+    <value nick="next-workspace" value="1"/>
+    <value nick="previous-workspace" value="2"/>
+    <value nick="show-overview" value="3"/>
+    <value nick="hide-overview" value="4"/>
+  </enum>
+
+  <schema id="org.gnome.shell.extensions.middle-drag"
+          path="/org/gnome/shell/extensions/middle-drag/">
+
+    <key name="enabled" type="b">
+      <default>true</default>
+      <summary>Enable gestures</summary>
+      <description>
+        When false the daemon releases the mouse grab and the middle button
+        behaves like a normal middle button again.
+      </description>
+    </key>
+
+    <key name="threshold" type="i">
+      <range min="10" max="1000"/>
+      <default>100</default>
+      <summary>Gesture threshold</summary>
+      <description>
+        Pointer movement in pixels required before a drag counts as a gesture.
+      </description>
+    </key>
+
+    <key name="device" type="s">
+      <default>'auto'</default>
+      <summary>Input device</summary>
+      <description>
+        Device path to grab, or "auto" to pick the first suitable mouse.
+      </description>
+    </key>
+
+    <key name="left-action" enum="org.gnome.shell.extensions.middle-drag.Action">
+      <default>'next-workspace'</default>
+      <summary>Action for a left drag</summary>
+    </key>
+
+    <key name="right-action" enum="org.gnome.shell.extensions.middle-drag.Action">
+      <default>'previous-workspace'</default>
+      <summary>Action for a right drag</summary>
+    </key>
+
+    <key name="up-action" enum="org.gnome.shell.extensions.middle-drag.Action">
+      <default>'hide-overview'</default>
+      <summary>Action for an upward drag</summary>
+    </key>
+
+    <key name="down-action" enum="org.gnome.shell.extensions.middle-drag.Action">
+      <default>'show-overview'</default>
+      <summary>Action for a downward drag</summary>
+    </key>
+
+  </schema>
+</schemalist>

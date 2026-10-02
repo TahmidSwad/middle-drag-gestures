@@ -4,21 +4,30 @@ import GLib from 'gi://GLib';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+
 const BUS_NAME = 'org.gnome.Shell.Extensions.MiddleDrag';
 const OBJECT_PATH = '/org/gnome/Shell/Extensions/MiddleDrag';
 
+// The D-Bus API is the contract with the input daemon.  Method names
+// describe the *operation*, not the gesture direction, so that the daemon
+// can map configured actions onto them (see daemon/middle-drag-daemon.py).
 const IFACE_XML = `
 <node>
   <interface name="org.gnome.Shell.Extensions.MiddleDrag">
     <method name="PreviousWorkspace"/>
     <method name="NextWorkspace"/>
-    <method name="OverviewUp"/>
-    <method name="OverviewDown"/>
+    <method name="ShowOverview"/>
+    <method name="HideOverview"/>
+    <method name="GetStatus">
+      <arg type="s" direction="out" name="status"/>
+    </method>
   </interface>
 </node>
 `;
 
+
 export default class MiddleDragGestures extends Extension {
+
     enable() {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(
             IFACE_XML,
@@ -67,7 +76,13 @@ export default class MiddleDragGestures extends Extension {
             return;
         }
 
-        console.log('[MiddleDrag] D-Bus service ready');
+        const settings = this.getSettings();
+        console.log(
+            `[MiddleDrag] D-Bus service ready (enabled=` +
+            `${settings.get_boolean('enabled')}, ` +
+            `threshold=${settings.get_int('threshold')}, ` +
+            `device=${settings.get_string('device')})`
+        );
     }
 
     disable() {
@@ -100,6 +115,10 @@ export default class MiddleDragGestures extends Extension {
         console.log('[MiddleDrag] D-Bus service disabled');
     }
 
+    // -----------------------------------------------------------------
+    // D-Bus methods
+    // -----------------------------------------------------------------
+
     PreviousWorkspace() {
         this._switchWorkspace(-1);
     }
@@ -108,13 +127,30 @@ export default class MiddleDragGestures extends Extension {
         this._switchWorkspace(1);
     }
 
-    OverviewUp() {
+    ShowOverview() {
         Main.overview.show();
     }
 
-    OverviewDown() {
+    HideOverview() {
         Main.overview.hide();
     }
+
+    // Introspectable status blob, mainly for docs/troubleshooting.
+    GetStatus() {
+        const settings = this.getSettings();
+
+        return JSON.stringify({
+            uuid: this.uuid,
+            version: this.metadata.version,
+            shellVersion: this.metadata['shell-version'].join('.'),
+            dbusName: BUS_NAME,
+            enabled: settings.get_boolean('enabled'),
+            threshold: settings.get_int('threshold'),
+            device: settings.get_string('device'),
+        });
+    }
+
+    // -----------------------------------------------------------------
 
     _switchWorkspace(direction) {
         const wm = global.workspace_manager;
