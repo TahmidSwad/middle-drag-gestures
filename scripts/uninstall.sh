@@ -95,8 +95,12 @@ fi
 # ---------------------------------------------------------------------------
 step "Stopping the daemon"
 
-if systemctl --user is-enabled middle-drag-daemon.service >/dev/null 2>&1 ||
-   systemctl --user is-active middle-drag-daemon.service >/dev/null 2>&1; then
+if ! mdg_session_writable; then
+    # The manager of this login owns the real unit paths; with a throwaway
+    # HOME (tests, experiments) it is not ours to command.
+    mdg_session_skip "stopping and disabling middle-drag-daemon.service"
+elif systemctl --user is-enabled middle-drag-daemon.service >/dev/null 2>&1 ||
+     systemctl --user is-active middle-drag-daemon.service >/dev/null 2>&1; then
     systemctl --user disable --now middle-drag-daemon.service >/dev/null 2>&1 ||
         true
     info "daemon stopped and disabled"
@@ -120,8 +124,12 @@ if [ -e "$UNIT_DST" ]; then
 else
     info "$UNIT_DST not present"
 fi
-systemctl --user daemon-reload
-info "systemd user units reloaded"
+if mdg_session_writable; then
+    systemctl --user daemon-reload
+    info "systemd user units reloaded"
+else
+    info "systemd user manager not reloaded (foreign HOME)"
+fi
 
 # ---------------------------------------------------------------------------
 step "Removing the GNOME Shell extension"

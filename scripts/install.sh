@@ -399,6 +399,8 @@ info "$UNIT_DST"
 
 if [ "$NO_SYSTEMD" = 1 ]; then
     info "daemon-reload skipped (--no-systemd)"
+elif ! mdg_session_writable; then
+    mdg_session_skip "the systemd user daemon-reload"
 else
     systemctl --user daemon-reload
 fi
@@ -485,7 +487,9 @@ info "user schema installed and readable ($SCHEMA_DST_DIR)"
 # ---------------------------------------------------------------------------
 step "Enabling extension and daemon"
 
-if mdg_extension_enable; then
+if [ "${MDG_SESSION_SKIPPED:-0}" = 1 ]; then
+    info "extension enable left to the live session - see above"
+elif mdg_extension_enable; then
     if [ "${MDG_EXTENSION_ACTIVE:-0}" = 1 ]; then
         info "extension enabled (active now)"
     else
@@ -498,6 +502,8 @@ fi
 
 if [ "$NO_SYSTEMD" = 1 ]; then
     info "systemd untouched (--no-systemd): no daemon-reload, enable or start"
+elif ! mdg_session_writable; then
+    mdg_session_skip "enabling and starting middle-drag-daemon.service"
 elif [ "$GROUP_ADDED" = 1 ]; then
     systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
         die "could not enable middle-drag-daemon.service"
@@ -538,6 +544,9 @@ elif [ "$GROUP_ADDED" = 1 ]; then
 elif [ "$NO_SYSTEMD" = 1 ]; then
     printf '%s\n' "Middle-Drag Gestures installed (systemd untouched: the unit was"
     printf '%s\n' "not enabled or started - that is what --no-systemd means)."
+elif [ "${MDG_SESSION_SKIPPED:-0}" = 1 ]; then
+    printf '%s\n' "Middle-Drag Gestures installed (session-level steps skipped:"
+    printf '%s\n' "foreign HOME, so the live Shell/dconf/systemd were left alone)."
 elif [ "$NO_START" = 1 ]; then
     printf '%s\n' "Middle-Drag Gestures installed (daemon enabled, not started)."
 elif systemctl --user is-active --quiet middle-drag-daemon.service; then

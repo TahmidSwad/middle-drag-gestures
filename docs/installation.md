@@ -336,6 +336,28 @@ non-zero if the machine is not clean:
 #   CLEAN: no trace of Middle-Drag Gestures remains.
 ```
 
+By default it judges the whole machine. When only one method matters - or
+when one of them is deliberately still installed - narrow it:
+
+```bash
+./scripts/verify-clean.sh --scope=script   # what install.sh wrote (~/.local, ~/.config, /etc/udev)
+./scripts/verify-clean.sh --scope=system    # what the RPM owns (/usr, the package)
+```
+
+A narrow run never hides what it skipped: a live RPM install reports
+`note: rpm package is installed but out of scope for --scope=script`, and
+`enabled-extensions`/dconf are judged under `all` only, because those keys
+are not labelled with the method that wrote them.
+
+**Running the scripts in a throwaway `HOME` is safe.** They check first
+whether `$HOME` is actually your own and, if not, skip everything that
+would reach the *live* session - `gsettings` writes (which go through the
+running dconf service, not through `HOME`), `gnome-extensions`, and your
+`systemctl --user`. Each skip is printed as `skipped ...`. Without that
+guard, a test run could disable your real extension: the test matrix once
+stopped a working daemon with SIGTERM and removed the uuid from
+`enabled-extensions`.
+
 After uninstalling, **log out and log back in** so GNOME Shell drops the
 extension completely - it only rescans extension directories at login.
 

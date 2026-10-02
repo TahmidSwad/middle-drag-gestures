@@ -60,8 +60,12 @@ run_uninstall() {
 }
 run_verify() {
     local home="$1"; shift
+    # --scope=script: this suite proves the *script's* cycle.  A live RPM
+    # install is a different method and out of scope here; verify-clean notes
+    # it rather than pretending it is not there.  Use verify-clean without
+    # --scope to judge the whole machine.
     HOME="$home" XDG_CACHE_HOME="$home/.cache" XDG_STATE_HOME="$home/.local/state" \
-        "$VERIFY" "$@" < /dev/null
+        "$VERIFY" --scope=script "$@" < /dev/null
 }
 
 ok()   { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$CURRENT"; }
@@ -241,14 +245,14 @@ else
 
     # verify-clean must report leftovers while installed ...
     rc_v_installed=0
-    "$VERIFY" >> "$CURRENT_LOG" 2>&1 || rc_v_installed=$?
+    "$VERIFY" --scope=script >> "$CURRENT_LOG" 2>&1 || rc_v_installed=$?
 
     rc_uninstall=0
     "$UNINSTALL" </dev/null >> "$CURRENT_LOG" 2>&1 || rc_uninstall=$?
 
     # ... and pass once uninstalled.
     rc_v_clean=0
-    "$VERIFY" </dev/null >> "$CURRENT_LOG" 2>&1 || rc_v_clean=$?
+    "$VERIFY" --scope=script </dev/null >> "$CURRENT_LOG" 2>&1 || rc_v_clean=$?
 
     if [ "$rc_install" = 0 ] && [ "$enabled" = 1 ] &&
        [ "$rc_v_installed" -ne 0 ] && [ "$rc_uninstall" = 0 ] &&

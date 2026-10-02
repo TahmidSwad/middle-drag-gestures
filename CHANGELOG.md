@@ -57,6 +57,12 @@ companion `evdev`/`uinput` daemon).
 - udev rule `udev/99-middle-drag-uinput.rules`.
 - Documentation: architecture, installation, troubleshooting.
 - Unit tests for gesture detection and device discovery.
+- `verify-clean.sh --scope=script|system|all` (default `all`). The two
+  install methods leave different traces, so one verdict cannot serve both:
+  the matrix's "the uninstall left nothing" assertion was failing over a live
+  RPM install. A narrow run names what it did not judge instead of hiding it,
+  and ownership is decided by location - a symlink into `$HOME` is the
+  script's, one into `/usr` is the package's.
 
 ### Changed
 
@@ -93,6 +99,15 @@ companion `evdev`/`uinput` daemon).
 
 ### Fixed
 
+- `install.sh`, `uninstall.sh` and `verify-clean.sh` no longer touch the live
+  session when `$HOME` is not the invoking user's own. None of the three
+  services involved respects `HOME`: `gsettings set` writes through the
+  running dconf service into the real `~/.config/dconf/user`, `gnome-extensions`
+  talks to the running Shell, and `systemctl --user` talks to the manager of
+  this login. Running the test matrix on a machine with the product installed
+  therefore stopped a working daemon with `SIGTERM` and stripped the uuid out
+  of the real `enabled-extensions` - the suite was switching off the user's
+  product. Each skip is printed as `skipped ...`, never silently.
 - Daemon now handles `SIGTERM`, so `systemctl --user stop` always releases the
   physical device grab instead of leaving the mouse unusable.
 - `gsettings get` prints an unset array as `@as []`, which the extension

@@ -16,6 +16,44 @@ info() { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
+# mdg_session_writable -> 0 when it is safe to touch Shell/dconf/systemd here
+#
+# install.sh and uninstall.sh are routinely run with a throwaway HOME - that
+# is how tests/install_matrix.sh and the experiments in the docs work - but
+# the services these scripts write to do not follow $HOME:
+#
+#   * `gsettings set` writes through the dconf service of *this login*, so it
+#     lands in the real ~/.config/dconf/user whatever HOME the client had.
+#     (Reads do use the client's path - which is why a fake HOME reads empty
+#     while its writes still escape.)
+#   * `gnome-extensions` talks to the running Shell.
+#   * `systemctl --user` talks to the manager of this login, whose unit
+#     paths were fixed when it started.
+#
+# Observed for real: running install_matrix.sh stopped a live, working
+# daemon with SIGTERM and stripped our uuid out of the real
+# enabled-extensions - a test switching off the user's product.  So from a
+# HOME that is not this user's own, on the login bus, session-level steps
+# are skipped and reported.  A private bus (dbus-run-session, used by
+# verify-extension.sh) is isolated by construction and stays allowed.
+MDG_SESSION_SKIPPED=0
+mdg_session_writable() {
+    case "${DBUS_SESSION_BUS_ADDRESS:-}" in
+        "" | *"unix:path=/run/user/$(id -u)/bus"*) : ;;   # login bus: check HOME
+        *) return 0 ;;                                    # private bus: isolated
+    esac
+    local real
+    real="$(getent passwd -- "$(id -un)" 2>/dev/null | cut -d: -f6)"
+    [ -n "$real" ] && [ "${HOME%/}" = "${real%/}" ]
+}
+# mdg_session_skip <what> - record a deliberate skip; never fails the caller
+mdg_session_skip() {
+    MDG_SESSION_SKIPPED=1
+    info "skipped $1: HOME=${HOME:-unset} is not the home of $(id -un), and the"
+    info "  login session's Shell/dconf/systemd are not ours to change from there"
+}
+
+# ---------------------------------------------------------------------------
 # Install state
 #
 # ~/.local/state/middle-drag-gestures/state is written by install.sh after a
@@ -68,6 +106,10 @@ mdg_apply_uinput_perms() {
 
 # mdg_set_enabled_flag <1|0>
 mdg_set_enabled_flag() {
+    mdg_session_writable || {
+        mdg_session_skip "writing enabled-extensions/disabled-extensions"
+        return 0
+    }
     command -v python3 >/dev/null 2>&1 || {
         info "warning: python3 missing; cannot record the extension state"
         return 1
@@ -126,6 +168,10 @@ PY
 
 # mdg_extension_enable -> 0 when the extension will be active, 1 on failure
 mdg_extension_enable() {
+    mdg_session_writable || {
+        mdg_session_skip "enabling the extension in the running Shell"
+        return 0
+    }
     if command -v gnome-extensions >/dev/null 2>&1 &&
        gnome-extensions enable "$MDG_UUID" 2>/dev/null; then
         MDG_EXTENSION_ACTIVE=1
@@ -141,6 +187,10 @@ mdg_extension_enable() {
 
 # mdg_extension_disable
 mdg_extension_disable() {
+    mdg_session_writable || {
+        mdg_session_skip "disabling the extension in the running Shell"
+        return 0
+    }
     if command -v gnome-extensions >/dev/null 2>&1; then
         gnome-extensions disable "$MDG_UUID" 2>/dev/null || true
     fi
@@ -150,6 +200,10 @@ mdg_extension_disable() {
 # mdg_forget_extension - drop every trace from org.gnome.shell (used by
 # `uninstall.sh --purge`; keeps dconf/free of stale uuids)
 mdg_forget_extension() {
+    mdg_session_writable || {
+        mdg_session_skip "purging the uuid from org.gnome.shell"
+        return 0
+    }
     command -v python3 >/dev/null 2>&1 || return 1
     python3 - "$MDG_UUID" <<'PY'
 import ast

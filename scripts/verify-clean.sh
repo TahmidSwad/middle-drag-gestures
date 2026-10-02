@@ -10,11 +10,26 @@
 # whichever of the two ways was used.
 #
 # Usage:
-#   ./scripts/verify-clean.sh [--purge] [--help]
+#   ./scripts/verify-clean.sh [--purge] [--scope=script|system|all] [--help]
 #
-#   --purge  additionally assert that everything only --purge removes is
-#            gone: dconf values, the enabled-extensions entry, the
-#            disabled-extensions entry and the install state file.
+#   --purge    additionally assert that everything only --purge removes is
+#              gone: dconf values, the enabled-extensions entry, the
+#              disabled-extensions entry and the install state file.
+#
+#   --scope=   which install method to judge.  The default, `all`, demands a
+#              clean machine whichever way it was installed with:
+#                script   paths install.sh writes (~/.local, ~/.config,
+#                         /etc/udev, the install state file)
+#                system   paths the Fedora RPM owns (/usr, /usr/lib/udev,
+#                         /usr/lib/systemd, the package itself)
+#              The session-level assertions - enabled-extensions and dconf
+#              values - run under `all` only: a dconf key cannot be
+#              attributed to one method or the other, so a narrow scope
+#              reports what it can prove and stays quiet about the rest.
+#
+#              tests/install_matrix.sh passes --scope=script so it can test
+#              the script's own cycle while the RPM is installed; that case
+#              is reported as a note, never silently hidden.
 #
 set -uo pipefail
 
@@ -34,10 +49,16 @@ UDEV_LEGACY="/etc/udev/rules.d/99-uinput.rules"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/middle-drag-gestures"
 
 PURGE=0
+SCOPE="all"
 for arg in "$@"; do
     case "$arg" in
         --purge)   PURGE=1 ;;
-        -h|--help) sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --scope=all|--scope=script|--scope=system) SCOPE="${arg#--scope=}" ;;
+        --scope=*)
+            printf 'Error: unknown scope: %s (use script, system or all)\n' \
+                "${arg#--scope=}" >&2
+            exit 2 ;;
+        -h|--help) sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)         printf 'Error: unknown option: %s (see --help)\n' "$arg" >&2; exit 2 ;;
     esac
 done
@@ -47,11 +68,17 @@ ok()   { printf 'ok:   %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; FAILURES=$((FAILURES + 1)); }
 note() { printf 'note: %s\n' "$*"; }
 
-printf 'Verifying that Middle-Drag Gestures is fully removed%s\n' \
-    "$([ "$PURGE" = 1 ] && echo ' (--purge)' || echo '')"
+# Which install method's leftovers are ours to judge (see --help).
+want_script() { [ "$SCOPE" != system ]; }
+want_system() { [ "$SCOPE" != script ]; }
+
+printf 'Verifying that Middle-Drag Gestures is fully removed%s%s\n' \
+    "$([ "$PURGE" = 1 ] && echo ' (--purge)' || echo '')" \
+    "$([ "$SCOPE" != all ] && echo " (--scope=$SCOPE)" || echo '')"
 printf '=========================================================\n\n'
 
-# --- files -----------------------------------------------------------------
+# --- files (script install) -------------------------------------------------
+if want_script; then
 if [ -e "$EXT_DST" ]; then
     fail "extension directory still exists: $EXT_DST"
 else
@@ -81,10 +108,12 @@ if [ -e "$CACHE_DIR" ]; then
 else
     ok "staging cache"
 fi
+fi   # want_script
 
 # --- system files (Fedora RPM install) -------------------------------------
 # `dnf install` puts everything under /usr instead of ~/.local.  Without the
 # checks below, verify-clean would print CLEAN over a live RPM install.
+if want_system; then
 for sys in \
     "/usr/libexec/middle-drag-daemon" \
     "/usr/lib/udev/rules.d/99-middle-drag-uinput.rules" \
@@ -105,7 +134,25 @@ if command -v rpm >/dev/null 2>&1; then
     fi
 fi
 
-# --- udev ------------------------------------------------------------------
+# The package enables its unit *globally* (50-middle-drag-gestures.preset
+# applied by the install scriptlet), so this symlink sits in /etc and belongs
+# to the package rather than to any one account.
+GLOBAL_WANTS="/etc/systemd/user/graphical-session.target.wants/middle-drag-daemon.service"
+if [ -L "$GLOBAL_WANTS" ] || [ -e "$GLOBAL_WANTS" ]; then
+    fail "unit is still enabled globally: $GLOBAL_WANTS"
+else
+    ok "no globally enabled unit"
+fi
+else
+    # Judging only the script's paths while the package is installed is a
+    # deliberate choice (the matrix does it) - say so rather than hide it.
+    if command -v rpm >/dev/null 2>&1 && rpm -q middle-drag-gestures >/dev/null 2>&1; then
+        note "rpm package is installed but out of scope for --scope=script - run without --scope to judge the whole machine"
+    fi
+fi   # want_system
+
+# --- udev (script install writes to /etc, the RPM to /usr/lib/udev) --------
+if want_script; then
 for rule in "$UDEV_DST" "$UDEV_LEGACY"; do
     if [ -f "$rule" ]; then
         if grep -q 'KERNEL=="uinput"' "$rule" 2>/dev/null; then
@@ -117,12 +164,46 @@ for rule in "$UDEV_DST" "$UDEV_LEGACY"; do
         ok "udev rule $(basename "$rule")"
     fi
 done
+fi   # want_script
 
 # --- systemd ---------------------------------------------------------------
 # Three distinct things must be gone: the unit files (user, /etc, /usr), the
 # symlink systemd creates when the unit is enabled, and the running daemon.
-for unit in "$UNIT_DST" \
-            "/etc/systemd/user/middle-drag-daemon.service" \
+if want_script; then
+if [ -e "$UNIT_DST" ]; then
+    fail "unit file still present: $UNIT_DST"
+else
+    ok "unit file $(basename "$UNIT_DST") absent"
+fi
+fi   # want_script
+
+# The enable symlink lives in the same directory for both methods, so it is
+# checked under every scope and attributed by where it points.
+enabled_links="$(find "${HOME}/.config/systemd/user" -name 'middle-drag-daemon.service' \
+    -type l 2>/dev/null)"
+found_link=0
+for link in $enabled_links; do
+    found_link=1
+    # The link lives in the same place for both methods; its target tells us
+    # whose it is (a script install points into $HOME, an RPM into /usr).
+    target="$(readlink -f "$link" 2>/dev/null || true)"
+    case "$SCOPE:$target" in
+        script:"$HOME"/*|all:*)
+            fail "unit is still enabled: $link -> ${target:-?}" ;;
+        script:*)
+            note "enabled symlink points at the RPM's unit - out of scope for --scope=script: $link" ;;
+        system:"$HOME"/*)
+            note "enabled symlink belongs to the script install - out of scope for --scope=system: $link" ;;
+        system:*|all:*)
+            fail "unit is still enabled: $link -> ${target:-?}" ;;
+    esac
+done
+if [ "$found_link" = 0 ]; then
+    ok "no enabled symlink"
+fi
+
+if want_system; then
+for unit in "/etc/systemd/user/middle-drag-daemon.service" \
             "/usr/lib/systemd/user/middle-drag-daemon.service"; do
     if [ -e "$unit" ]; then
         fail "unit file still present: $unit"
@@ -130,35 +211,53 @@ for unit in "$UNIT_DST" \
         ok "unit file $(basename "$unit") absent"
     fi
 done
+fi   # want_system
 
-enabled_links="$(find "${HOME}/.config/systemd/user" -name 'middle-drag-daemon.service' \
-    -type l 2>/dev/null)"
-if [ -n "$enabled_links" ]; then
-    fail "unit is still enabled: $enabled_links"
-else
-    ok "no enabled symlink"
-fi
+# These two talk to the user manager of *this login*, whose unit paths came
+# from its own HOME rather than ours.  Under a throwaway HOME they would judge
+# someone else's session - observed: a matrix run reported the live daemon as
+# still running - so skip them and say so.
+if mdg_session_writable; then
+    if systemctl --user is-active --quiet middle-drag-daemon.service 2>/dev/null; then
+        # Both installs use the same unit name, so ask systemd which file it
+        # actually loaded before deciding whose leftover this is.
+        frag="$(systemctl --user show -p FragmentPath --value \
+            middle-drag-daemon.service 2>/dev/null || true)"
+        case "$SCOPE:$frag" in
+            all:*|script:"$UNIT_DST"|system:/usr/lib/systemd/user/middle-drag-daemon.service)
+                fail "daemon service is still running ($frag)" ;;
+            script:*)
+                note "a daemon is running from the RPM install - out of scope for --scope=script" ;;
+            system:*)
+                note "a daemon is running from the script install - out of scope for --scope=system" ;;
+            *)
+                fail "daemon service is still running (unit file unknown: ${frag:-none})"
+                ;;
+        esac
+    else
+        ok "daemon service not running"
+    fi
 
-if systemctl --user is-active --quiet middle-drag-daemon.service 2>/dev/null; then
-    fail "daemon service is still running"
+    # The manager can hold a unit in memory after its file has been deleted;
+    # that clears at the next daemon-reload or login, so it is only a note
+    # unless a unit file actually exists somewhere.
+    load_state="$(systemctl --user show -p LoadState --value \
+        middle-drag-daemon.service 2>/dev/null || echo unknown)"
+    if [ "$load_state" = "not-found" ] || [ "$load_state" = "unknown" ]; then
+        ok "systemd manager has no record of the unit"
+    else
+        # No unit file exists anywhere (checked above), so this is only the
+        # manager's in-memory copy, which drops at the next daemon-reload.
+        note "systemd manager still holds '$load_state' in memory - clears at\n        next daemon-reload or login"
+    fi
 else
-    ok "daemon service not running"
-fi
-
-# The manager can hold a unit in memory after its file has been deleted; that
-# clears at the next daemon-reload or login, so it is only a note unless a
-# unit file actually exists somewhere.
-load_state="$(systemctl --user show -p LoadState --value \
-    middle-drag-daemon.service 2>/dev/null || echo unknown)"
-if [ "$load_state" = "not-found" ] || [ "$load_state" = "unknown" ]; then
-    ok "systemd manager has no record of the unit"
-else
-    # No unit file exists anywhere (checked above), so this is only the
-    # manager's in-memory copy, which drops at the next daemon-reload.
-    note "systemd manager still holds '$load_state' in memory - clears at\n        next daemon-reload or login"
+    note "skipped live systemd checks (foreign HOME): they would report this login's manager, not the tree under test"
 fi
 
 # --- extension state in org.gnome.shell ------------------------------------
+# Only under `all`: the same uuid in these keys could have been written by
+# either method, and there is no way to prove whose it is.
+if [ "$SCOPE" = all ]; then
 enabled_list="$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")"
 disabled_list="$(gsettings get org.gnome.shell disabled-extensions 2>/dev/null || echo "[]")"
 
@@ -166,8 +265,15 @@ case "$enabled_list" in
     *"$UUID"*) fail "uuid is still in org.gnome.shell enabled-extensions" ;;
     *)         ok "not enabled in org.gnome.shell" ;;
 esac
+else
+    note "org.gnome.shell keys not judged under --scope=$SCOPE (they belong to both methods)"
+    disabled_list="[]"
+fi
 
 # --- dconf -----------------------------------------------------------------
+# Same attribution problem as the keys above: these values are not labeled
+# with the method that wrote them, so they belong to `all`.
+if [ "$SCOPE" = all ]; then
 dconf_out="$(dconf list "/org/gnome/shell/extensions/middle-drag/" 2>/dev/null || true)"
 if [ -n "$dconf_out" ]; then
     if [ "$PURGE" = 1 ]; then
@@ -179,8 +285,10 @@ if [ -n "$dconf_out" ]; then
 else
     ok "no dconf values"
 fi
+fi
 
-# --- install state ---------------------------------------------------------
+# --- install state (written by the script installer only) -------------------
+if want_script; then
 if [ -f "$MDG_STATE_FILE" ]; then
     if [ "$PURGE" = 1 ]; then
         fail "install state file remains: $MDG_STATE_FILE"
@@ -190,8 +298,9 @@ if [ -f "$MDG_STATE_FILE" ]; then
 else
     ok "install state file"
 fi
+fi   # want_script
 
-if [ "$PURGE" = 1 ]; then
+if [ "$PURGE" = 1 ] && [ "$SCOPE" = all ]; then
     case "$disabled_list" in
         *"$UUID"*) fail "uuid is still in org.gnome.shell disabled-extensions" ;;
         *)         ok "not in org.gnome.shell disabled-extensions" ;;
