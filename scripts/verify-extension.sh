@@ -23,6 +23,9 @@
 #                                      D-Bus activated services (the prefs
 #                                      host runs there, see below)
 #
+# The directory is removed when every check passes and kept (its path is
+# printed) when something fails.
+#
 set -u
 
 # Run everything on a private session bus: a second GNOME Shell must never
@@ -281,7 +284,9 @@ fi
 say ""
 if [ "$FAILURES" -eq 0 ]; then
     say "all extension checks passed"
-    say "logs kept in ${TMPDIR_VERIFY}"
+    # Nothing left to debug: a passing run should not drop a log directory
+    # in /tmp every time it is executed.
+    rm -rf "${TMPDIR_VERIFY}" 2>/dev/null
     exit 0
 fi
 
