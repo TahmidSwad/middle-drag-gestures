@@ -1,5 +1,6 @@
 [Unit]
-Description=Global Middle-Drag Mouse Gestures
+Description=Middle-Drag Gestures input daemon (evdev/uinput)
+Documentation=file:%h/Desktop/projects/middle-drag-gestures/docs/architecture.md
 After=graphical-session.target
 Wants=graphical-session.target
 
@@ -8,6 +9,9 @@ Type=simple
 ExecStart=%h/.local/bin/middle-drag-daemon.py
 Restart=on-failure
 RestartSec=2
+# The daemon releases the physical device grab on SIGTERM; give it time
+# to do so before systemd escalates to SIGKILL.
+TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical-session.target

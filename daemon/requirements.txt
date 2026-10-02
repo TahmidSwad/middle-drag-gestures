@@ -1,0 +1,12 @@
+# Runtime dependencies for the Middle-Drag Gestures daemon.
+#
+# On Fedora these are all available as RPMs and are the preferred install
+# method:
+#
+#   sudo dnf install python3-evdev python3-dbus python3-gobject
+#
+# The pip names are listed below for virtualenv-based installs.
+
+evdev>=1.9
+dbus-python>=1.3
+PyGObject>=3.42
