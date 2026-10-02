@@ -78,11 +78,22 @@ See [docs/installation.md](docs/installation.md) for manual installation and
 ## Development
 
 ```bash
-make test         # unit + integration tests
-make verify       # load the extension in a throwaway GNOME Shell
-make zip          # build dist/middle-drag-gestures@swad.shell-extension.zip
-make install      # redeploy everything
-make clean
+# tests
+python3 -m unittest discover -s tests -v   # unit tests
+python3 tests/integration_test.py          # end-to-end test with a synthetic mouse
+
+# extension
+./scripts/verify-extension.sh              # load it in a throwaway GNOME Shell
+./scripts/package-extension.sh             # build dist/*.shell-extension.zip
+
+# deployment
+./scripts/install.sh | uninstall.sh | enable.sh | disable.sh
+```
+
+The same targets exist in the `Makefile` if you have `make`:
+
+```bash
+make test | verify | zip | install | uninstall | clean
 ```
 
 `verify-extension.sh` exists because GNOME Shell caches extension code for the

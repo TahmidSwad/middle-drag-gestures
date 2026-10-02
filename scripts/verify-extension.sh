@@ -17,25 +17,46 @@
 # environment); the extension must be installed under
 # ~/.local/share/gnome-shell/extensions/.
 #
+# Output layout: <tmpdir>/shell.log    messages from the nested shell
+#                <tmpdir>/prefs.log    messages from `gnome-extensions prefs`
+#                <tmpdir>/session.log  messages from dbus-daemon and from
+#                                      D-Bus activated services (the prefs
+#                                      host runs there, see below)
+#
 set -u
 
 # Run everything on a private session bus: a second GNOME Shell must never
 # join the real desktop session's bus (it would fight over org.gnome.Shell).
+#
+# The session log exists because `gnome-extensions prefs` does not run
+# prefs.js itself - it D-Bus-activates /usr/share/gnome-shell/
+# org.gnome.Shell.Extensions, which is spawned by *dbus-daemon* and therefore
+# writes to dbus-daemon's stderr.  Redirecting the `gnome-extensions` process
+# (as you would naturally do) captures nothing at all.  dbus-daemon inherits
+# the stderr of dbus-run-session, so redirecting before the exec catches it.
 if [ -z "${MIDDLE_DRAG_VERIFY_INNER:-}" ]; then
     if ! command -v dbus-run-session >/dev/null 2>&1; then
         echo "dbus-run-session not found (package dbus-daemon)" >&2
         exit 1
     fi
-    exec dbus-run-session -- env MIDDLE_DRAG_VERIFY_INNER=1 bash "$0" "$@"
+    VERIFY_TMP="$(mktemp -d /tmp/middle-drag-verify.XXXXXX)"
+    SESSION_LOG="$VERIFY_TMP/session.log"
+    : > "$SESSION_LOG"
+    exec dbus-run-session -- \
+        env MIDDLE_DRAG_VERIFY_INNER=1 \
+            MIDDLE_DRAG_VERIFY_TMP="$VERIFY_TMP" \
+            MIDDLE_DRAG_SESSION_LOG="$SESSION_LOG" \
+        bash "$0" "$@" 2>>"$SESSION_LOG"
 fi
 
 UUID="middle-drag-gestures@swad"
 DEST="org.gnome.Shell.Extensions.MiddleDrag"
 OBJPATH="/org/gnome/Shell/Extensions/MiddleDrag"
 WAYLAND_NAME="middle-drag-verify"
-DURATION=15   # seconds to keep the prefs window open
+PREFS_TIMEOUT=10   # seconds to wait for the prefs host to report back
 
-TMPDIR_VERIFY="$(mktemp -d /tmp/middle-drag-verify.XXXXXX)"
+TMPDIR_VERIFY="${MIDDLE_DRAG_VERIFY_TMP:-$(mktemp -d /tmp/middle-drag-verify.XXXXXX)}"
+SESSION_LOG="${MIDDLE_DRAG_SESSION_LOG:-$TMPDIR_VERIFY/session.log}"
 SHELL_LOG="$TMPDIR_VERIFY/shell.log"
 PREFS_LOG="$TMPDIR_VERIFY/prefs.log"
 FAILURES=0
@@ -43,16 +64,45 @@ FAILURES=0
 SHELL_PID=""
 
 cleanup() {
+    kill_prefs_host
     if [ -n "$SHELL_PID" ] && kill -0 "$SHELL_PID" 2>/dev/null; then
         kill "$SHELL_PID" 2>/dev/null
         wait "$SHELL_PID" 2>/dev/null
     fi
 }
+
+# The prefs host is a separate process on our private bus.  Only kill the one
+# belonging to this session - the desktop session may run its own.
+kill_prefs_host() {
+    local mine="${DBUS_SESSION_BUS_ADDRESS:-}" pid
+    [ -n "$mine" ] || return 0
+    for pid in $(pgrep -f "gjs .*org\.gnome\.Shell\.Extensions" 2>/dev/null); do
+        if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
+            grep -qxF "DBUS_SESSION_BUS_ADDRESS=$mine"; then
+            kill "$pid" 2>/dev/null
+        fi
+    done
+    return 0
+}
+
 trap cleanup EXIT
 
 say()  { printf '%s\n' "$*"; }
 pass() { printf '  ok   - %s\n' "$*"; }
 fail() { printf '  FAIL - %s\n' "$*"; FAILURES=$((FAILURES + 1)); }
+
+# Poll a log file until a pattern shows up or the timeout expires.
+wait_for_log() {
+    local file="$1" pattern="$2" timeout="${3:-$PREFS_TIMEOUT}" waited=0
+    while [ "$waited" -lt "$((timeout * 2))" ]; do
+        if [ -f "$file" ] && grep -q -- "$pattern" "$file"; then
+            return 0
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    return 1
+}
 
 if [ ! -d "${HOME}/.local/share/gnome-shell/extensions/${UUID}" ]; then
     say "extension ${UUID} is not installed; run scripts/install.sh first"
@@ -84,6 +134,8 @@ if [ "$ready" != 1 ]; then
     say ""
     say "--- shell log tail ---"
     tail -30 "$SHELL_LOG"
+    say "--- session log tail ---"
+    tail -30 "$SESSION_LOG"
     exit 1
 fi
 
@@ -142,23 +194,33 @@ fi
 
 # --- preferences ----------------------------------------------------------
 say ""
-say "opening the preferences window for ${DURATION}s..."
+say "opening the preferences window (waiting up to ${PREFS_TIMEOUT}s)..."
 export WAYLAND_DISPLAY="$WAYLAND_NAME"
 export GTK_A11Y=none   # accessibility bus is unavailable in this sandbox
-timeout "$DURATION" gnome-extensions prefs "$UUID" >"$PREFS_LOG" 2>&1
+
+# gnome-extensions returns as soon as it has asked the service to activate,
+# so its exit code tells us nothing; the service logs into SESSION_LOG.
+gnome-extensions prefs "$UUID" >"$PREFS_LOG" 2>&1
 PREFS_EXIT=$?
 
-# 124 = the window was still open when the timeout fired (success).
-#   0 = the window was opened and closed again.
 if grep -qi "doesn't have preferences" "$PREFS_LOG"; then
     fail "gnome-extensions could not find prefs.js"
-elif grep -qiE "JS ERROR|Traceback" "$PREFS_LOG"; then
+elif wait_for_log "$SESSION_LOG" "preferences loaded"; then
+    # Give a JS error raised after fillPreferencesWindow() a moment to land.
+    sleep 1.5
+    if grep -qiE "JS ERROR|Traceback" "$SESSION_LOG" "$PREFS_LOG" 2>/dev/null; then
+        fail "prefs.js raised an error:"
+        grep -ihE "JS ERROR|Traceback" "$SESSION_LOG" "$PREFS_LOG" 2>/dev/null |
+            sed 's/^/        /'
+    else
+        pass "prefs.js built the preferences window without errors"
+    fi
+elif grep -qiE "JS ERROR|Traceback" "$SESSION_LOG" "$PREFS_LOG" 2>/dev/null; then
     fail "prefs.js raised an error:"
-    grep -iE "JS ERROR|Traceback" "$PREFS_LOG" | sed 's/^/        /'
-elif ! grep -q "preferences loaded" "$PREFS_LOG"; then
-    fail "prefs.js did not finish building the window (no marker in log)"
+    grep -ihE "JS ERROR|Traceback" "$SESSION_LOG" "$PREFS_LOG" 2>/dev/null |
+        sed 's/^/        /'
 else
-    pass "prefs.js built the window without errors (exit code ${PREFS_EXIT})"
+    fail "prefs host never reported the window (gnome-extensions exit ${PREFS_EXIT}; see ${SESSION_LOG})"
 fi
 
 say ""
