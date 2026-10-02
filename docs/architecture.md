@@ -147,6 +147,12 @@ Method names describe the **operation**, not the gesture direction, so the
 configured action decides which method is called. The daemon never touches
 GNOME's internal APIs.
 
+Because GNOME Shell only reloads extension code at login, the daemon also
+tolerates a session that still exports the pre-rename names `OverviewUp()` /
+`OverviewDown()`: it calls the current name first and retries once under the
+old name when the answer is `UnknownMethod` (`LEGACY_METHODS` in the daemon).
+New sessions never hit that path.
+
 Check it yourself:
 
 ```bash

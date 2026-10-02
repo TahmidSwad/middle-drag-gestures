@@ -109,11 +109,16 @@ prompt.
 
 The daemon restarts immediately, but `extension.js` and `prefs.js` are cached
 by the Shell. **Log out and back in** after updating the extension. Until you
-do, the daemon may log:
+do, the running Shell still exports the pre-rename methods and the daemon
+logs one notice:
 
 ```text
-D-Bus call ShowOverview() failed: …UnknownMethod
+the running extension predates the D-Bus method rename; gestures keep
+working through the legacy OverviewUp() fallback. …
 ```
+
+Vertical gestures keep working meanwhile through that fallback; nothing is
+broken while you wait for your next login.
 
 To test extension changes *without* logging out, use:
 

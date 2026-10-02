@@ -29,7 +29,9 @@ companion `evdev`/`uinput` daemon).
 ### Changed
 
 - D-Bus methods `OverviewUp`/`OverviewDown` renamed to `ShowOverview`/
-  `HideOverview`.
+  `HideOverview`. The daemon retries under the old name when the running
+  Shell still exports the pre-rename code, so vertical gestures keep working
+  across an upgrade without waiting for the next login.
 - Daemon now talks to D-Bus through `dbus-python` instead of spawning `gdbus`
   for every call.
 - udev rule renamed from `99-uinput.rules` to `99-middle-drag-uinput.rules`.

@@ -71,9 +71,18 @@ gnome-extensions prefs middle-drag-gestures@swad
 
 ### Introspection shows `OverviewUp()` / `OverviewDown()`
 
-The running Shell still has the pre-rename code (see above). The daemon now
-calls `ShowOverview()` / `HideOverview()`, so the vertical gestures log
-`UnknownMethod` until you re-login.
+The running Shell still has the pre-rename code (see above). This is harmless:
+the daemon first calls `ShowOverview()` / `HideOverview()`, and when that
+answers `UnknownMethod` it retries under the old name, so vertical gestures
+keep working. It logs the reason once:
+
+```text
+the running extension predates the D-Bus method rename; gestures keep
+working through the legacy OverviewUp() fallback. Log out and log back in …
+```
+
+Log out and log back in to load the renamed `extension.js` and silence the
+notice.
 
 ---
 

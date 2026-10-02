@@ -75,6 +75,17 @@ ACTION_METHODS = {
     "none": None,
 }
 
+#: Current method name -> the name used by extension builds that predate the
+#: API rename (plan section 46).  GNOME Shell only reloads extension code at
+#: login, so right after an upgrade the running session still answers the old
+#: names.  Instead of leaving vertical gestures dead until the next login the
+#: daemon retries once under the old name.  The current name is always tried
+#: first, so this path never runs against an up-to-date session.
+LEGACY_METHODS = {
+    "ShowOverview": "OverviewUp",  # old code: Main.overview.show()
+    "HideOverview": "OverviewDown",  # old code: Main.overview.hide()
+}
+
 DEFAULT_ACTIONS = {
     "left-action": "next-workspace",
     "right-action": "previous-workspace",
@@ -388,6 +399,10 @@ def is_unknown_method_error(exc: Exception) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _ExtensionMissing(Exception):
+    """Internal: the bus name has no owner (the reason is already logged)."""
+
+
 class GnomeBridge:
     """Calls the GNOME Shell extension over the session bus.
 
@@ -401,6 +416,7 @@ class GnomeBridge:
         self._missing = False
         self._failed = False
         self._stale = False
+        self._legacy = False
 
     def call(self, method: str | None) -> bool:
         if method is None:
@@ -413,46 +429,79 @@ class GnomeBridge:
                 LOG.error("python3-dbus is not installed; gestures disabled")
             return False
 
-        try:
-            if self._bus is None:
-                self._bus = dbus.SessionBus()
-                LOG.debug("connected to the session bus")
+        legacy = LEGACY_METHODS.get(method)
+        attempts = (method, legacy) if legacy else (method,)
 
-            if not self._bus.name_has_owner(BUS_DEST):
-                self._warn_missing()
+        for attempt, name in enumerate(attempts):
+            try:
+                self._send(name)
+            except _ExtensionMissing:
+                return False
+            except DBusException as exc:
+                if attempt == 0 and legacy and is_unknown_method_error(exc):
+                    # The session runs pre-rename code; try the old name.
+                    LOG.debug("%s() unknown, trying legacy %s()", method, name)
+                    continue
+                self._warn_call_failed(name, exc)
+                return False
+            except Exception as exc:  # never let a bus problem kill the daemon
+                self._failed = True
+                LOG.error("unexpected D-Bus error calling %s(): %r", name, exc)
+                self._bus = None
                 return False
 
-            message = dbus.lowlevel.MethodCallMessage(
-                BUS_DEST, OBJECT_PATH, IFACE, method
-            )
-            # NB: this C-level API only accepts positional arguments.
-            self._bus.send_message_with_reply_and_block(message, 2.0)
-        except DBusException as exc:
-            self._failed = True
-            LOG.warning("D-Bus call %s() failed: %s", method, exc)
-            if is_unknown_method_error(exc) and not self._stale:
-                self._stale = True
-                LOG.warning(
-                    "this GNOME Shell does not implement %s(): it is still "
-                    "running the old extension code. Log out and log back in "
-                    "to load the updated extension.js (extension JS is only "
-                    "reloaded at login on Wayland)",
-                    method,
-                )
-            self._bus = None
-            return False
-        except Exception as exc:  # never let a bus problem kill the daemon
-            self._failed = True
-            LOG.error("unexpected D-Bus error calling %s(): %r", method, exc)
-            self._bus = None
-            return False
+            if attempt:
+                self._note_legacy(name)
+            if self._failed:
+                LOG.info("D-Bus connection to the extension recovered")
+            self._failed = False
+            self._missing = False
+            LOG.debug("D-Bus %s() ok", name)
+            return True
 
-        if self._failed:
-            LOG.info("D-Bus connection to the extension recovered")
-        self._failed = False
-        self._missing = False
-        LOG.debug("D-Bus %s() ok", method)
-        return True
+        return False  # pragma: no cover - every attempt above returns
+
+    def _send(self, name: str) -> None:
+        """Connect if needed and invoke ``name``; raise on any D-Bus error."""
+        if self._bus is None:
+            self._bus = dbus.SessionBus()
+            LOG.debug("connected to the session bus")
+
+        if not self._bus.name_has_owner(BUS_DEST):
+            self._warn_missing()
+            raise _ExtensionMissing(name)
+
+        message = dbus.lowlevel.MethodCallMessage(
+            BUS_DEST, OBJECT_PATH, IFACE, name
+        )
+        # NB: this C-level API only accepts positional arguments.
+        self._bus.send_message_with_reply_and_block(message, 2.0)
+
+    def _warn_call_failed(self, name: str, exc: Exception) -> None:
+        self._failed = True
+        LOG.warning("D-Bus call %s() failed: %s", name, exc)
+        if is_unknown_method_error(exc) and not self._stale:
+            self._stale = True
+            LOG.warning(
+                "this GNOME Shell does not implement %s(): it is still "
+                "running the old extension code. Log out and log back in "
+                "to load the updated extension.js (extension JS is only "
+                "reloaded at login on Wayland)",
+                name,
+            )
+        self._bus = None
+
+    def _note_legacy(self, name: str) -> None:
+        if self._legacy:
+            return
+        self._legacy = True
+        LOG.warning(
+            "the running extension predates the D-Bus method rename; "
+            "gestures keep working through the legacy %s() fallback. Log out "
+            "and log back in to load the updated extension.js (extension JS "
+            "is only reloaded at login on Wayland)",
+            name,
+        )
 
     def _warn_missing(self) -> None:
         if not self._missing:
