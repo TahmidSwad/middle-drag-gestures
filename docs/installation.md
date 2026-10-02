@@ -160,7 +160,14 @@ extension, prefs, GSettings schema, daemon, udev rule and user unit - into
 `/usr`:
 
 ```bash
-spectool -g packaging/fedora/middle-drag-gestures.spec
+sudo dnf install -y rpm-build systemd-rpm-macros
+
+# Source0 has no real URL in this repository, so `spectool -g` does not
+# work - make the tarball from the checkout instead:
+mkdir -p ~/rpmbuild/SOURCES
+git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.0/ \
+  -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.0.tar.gz HEAD
+
 rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
 ```
@@ -168,15 +175,23 @@ sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
 A package cannot perform per-user steps, so afterwards:
 
 ```bash
-sudo usermod -aG input "$USER"              # then log out and log back in
-gnome-extensions enable middle-drag-gestures@swad
-systemctl --user enable --now middle-drag-daemon.service
+sudo usermod -aG input "$USER"                        # applies at the NEXT login
+gnome-extensions enable middle-drag-gestures@swad     # immediate
+systemctl --user enable --now middle-drag-daemon.service   # immediate
 ```
 
-> **Status:** the spec's `%install` section has been executed against a build
-> root and produces exactly what `%files` lists, but no RPM has been built
-> yet - `rpm-build` and `systemd-rpm-macros` are not installed on this
-> machine.
+**Do not skip the `input` group.** `dnf install` does not add you to it, and
+without it the daemon cannot open `/dev/input` or `/dev/uinput` (both are
+`root:input`). Everything looks fine until your next login, and then the
+daemon fails with `permission denied on /dev/input/…` — the current session
+may still work if your shell inherited the group from an earlier login.
+
+> **Verified** on Fedora 44 / GNOME Shell 50.5 (2026-10-03): `rpmbuild`
+> completed with no unpackaged files, `rpm -V` clean after install, the udev
+> rule really fired (`/dev/uinput` → `0660 root:input`), `gsettings` resolved
+> the system schema (`threshold = 100`), the extension reached
+> `State: ACTIVE` in a running Shell, and the daemon grabbed the mouse and
+> answered `GetStatus` over D-Bus.
 
 ---
 

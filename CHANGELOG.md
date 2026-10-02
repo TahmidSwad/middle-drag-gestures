@@ -41,7 +41,11 @@ companion `evdev`/`uinput` daemon).
 - Fedora RPM now packages the whole product: extension, preferences UI, user
   and system GSettings schema, daemon, udev rule and systemd user unit (it
   previously shipped the daemon half only, so an installed system had a daemon
-  calling a D-Bus name nobody owned).
+  calling a D-Bus name nobody owned). Built and verified on Fedora 44 /
+  GNOME Shell 50.5: `rpmbuild` clean with no unpackaged files, `rpm -V` clean
+  after install, the udev rule applied (`/dev/uinput` → `0660 root:input`),
+  the extension reached `State: ACTIVE`, and the daemon grabbed the mouse and
+  answered `GetStatus` over D-Bus.
 - udev rule `udev/99-middle-drag-uinput.rules`.
 - Documentation: architecture, installation, troubleshooting.
 - Unit tests for gesture detection and device discovery.

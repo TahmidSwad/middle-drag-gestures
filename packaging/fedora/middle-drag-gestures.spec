@@ -24,16 +24,32 @@
 # package therefore reloads udev rules in %post and %postun but does not
 # try to chmod the node - it cannot know what it was before the rule.
 #
-# Build (from a release tarball):
+# Build (Source0 has no real URL in this repository, so `spectool -g` does
+# not work - make the tarball from the checkout instead):
 #
-#   spectool -g middle-drag-gestures.spec
-#   rpmbuild -ba middle-drag-gestures.spec
+#   mkdir -p ~/rpmbuild/SOURCES
+#   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.0/ \
+#     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.0.tar.gz HEAD
+#   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 #
 # systemd-rpm-macros supplies _userunitdir, _udevrulesdir and the
 # %systemd_user_* scriptlets; glib2 supplies glib-compile-schemas, which
 # runs in %install to validate the schema and build the extension's own
-# gschemas.compiled.  NOTE: not yet built - this repository's build host
-# has no rpmbuild (see CHANGELOG).
+# gschemas.compiled.
+#
+# Built and verified on Fedora 44 / GNOME Shell 50.5 (2026-10-03):
+# rpmbuild clean with no unpackaged files, `rpm -V` clean after install,
+# the udev rule really fires (/dev/uinput -> 0660 root:input), the system
+# schema resolves for gsettings, the extension reaches State: ACTIVE in a
+# running Shell, and the daemon grabs the mouse and answers GetStatus on
+# org.gnome.Shell.Extensions.MiddleDrag.
+#
+# A package cannot perform per-user steps, so these three stay manual
+# (docs/installation.md):
+#
+#   sudo usermod -aG input "$USER"                  # applies at next login
+#   gnome-extensions enable middle-drag-gestures@swad
+#   systemctl --user enable --now middle-drag-daemon.service
 
 %global uuid middle-drag-gestures@swad
 %global schema_id org.gnome.shell.extensions.middle-drag

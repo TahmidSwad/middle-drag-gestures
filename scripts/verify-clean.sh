@@ -5,7 +5,9 @@
 # The machine-readable counterpart of uninstall.sh: uninstall.sh removes
 # things and reports what it could not; this script asserts the end state
 # and exits non-zero if anything is left.  It checks every destination that
-# install.sh writes to (see its header).
+# install.sh writes to (see its header) **and** every path the Fedora RPM
+# owns under /usr, /usr/lib and /usr/lib/udev - so a CLEAN verdict holds
+# whichever of the two ways was used.
 #
 # Usage:
 #   ./scripts/verify-clean.sh [--purge] [--help]
@@ -78,6 +80,29 @@ if [ -e "$CACHE_DIR" ]; then
     fail "staging cache still present: $CACHE_DIR"
 else
     ok "staging cache"
+fi
+
+# --- system files (Fedora RPM install) -------------------------------------
+# `dnf install` puts everything under /usr instead of ~/.local.  Without the
+# checks below, verify-clean would print CLEAN over a live RPM install.
+for sys in \
+    "/usr/libexec/middle-drag-daemon" \
+    "/usr/lib/udev/rules.d/99-middle-drag-uinput.rules" \
+    "/usr/share/gnome-shell/extensions/middle-drag-gestures@swad" \
+    "/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml"; do
+    if [ -e "$sys" ]; then
+        fail "RPM file still installed: $sys"
+    else
+        ok "RPM file $(basename "$sys") absent"
+    fi
+done
+
+if command -v rpm >/dev/null 2>&1; then
+    if rpm -q middle-drag-gestures >/dev/null 2>&1; then
+        fail "rpm package still installed: $(rpm -q middle-drag-gestures)"
+    else
+        ok "rpm package not installed"
+    fi
 fi
 
 # --- udev ------------------------------------------------------------------
