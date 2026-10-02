@@ -35,6 +35,17 @@ as_root() {
 printf 'Uninstalling Middle-Drag Gestures\n'
 printf '=================================\n'
 
+# Only the udev rule needs root; skip it gracefully when we cannot elevate.
+if [ "$(id -u)" = 0 ]; then
+    HAVE_ROOT=1
+elif [ -t 0 ] && sudo -v 2>/dev/null; then
+    HAVE_ROOT=1
+elif sudo -n true 2>/dev/null; then
+    HAVE_ROOT=1
+else
+    HAVE_ROOT=0
+fi
+
 # ---------------------------------------------------------------------------
 step "Stopping the daemon"
 
@@ -87,24 +98,35 @@ fi
 # ---------------------------------------------------------------------------
 step "Removing the udev rule"
 
-removed=0
-if [ -f "$UDEV_DST" ]; then
-    as_root rm -f "$UDEV_DST"
-    info "removed $UDEV_DST"
-    removed=1
-fi
-# The pre-project file used this name; only remove it if it is ours.
-if [ -f "$UDEV_LEGACY" ] && grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
-    as_root rm -f "$UDEV_LEGACY"
-    info "removed legacy $UDEV_LEGACY"
-    removed=1
-fi
-if [ "$removed" = 1 ]; then
-    as_root udevadm control --reload-rules
-    as_root udevadm trigger --subsystem-match=misc
-    info "udev rules reloaded"
+if [ "$HAVE_ROOT" = 0 ]; then
+    if [ -f "$UDEV_DST" ] || [ -f "$UDEV_LEGACY" ]; then
+        info "skipped: cannot elevate privileges from this shell."
+        info "remove it manually:"
+        info "  sudo rm -f $UDEV_DST $UDEV_LEGACY"
+        info "  sudo udevadm control --reload-rules"
+    else
+        info "no udev rule installed"
+    fi
 else
-    info "no udev rule installed"
+    removed=0
+    if [ -f "$UDEV_DST" ]; then
+        as_root rm -f "$UDEV_DST"
+        info "removed $UDEV_DST"
+        removed=1
+    fi
+    # The pre-project file used this name; only remove it if it is ours.
+    if [ -f "$UDEV_LEGACY" ] && grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
+        as_root rm -f "$UDEV_LEGACY"
+        info "removed legacy $UDEV_LEGACY"
+        removed=1
+    fi
+    if [ "$removed" = 1 ]; then
+        as_root udevadm control --reload-rules
+        as_root udevadm trigger --subsystem-match=misc
+        info "udev rules reloaded"
+    else
+        info "no udev rule installed"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

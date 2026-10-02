@@ -78,10 +78,11 @@ See [docs/installation.md](docs/installation.md) for manual installation and
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v   # unit tests
-python3 tests/integration_test.py          # end-to-end test with a synthetic mouse
-./scripts/verify-extension.sh              # load the extension in a throwaway Shell
-./scripts/install.sh                       # redeploy everything
+make test         # unit + integration tests
+make verify       # load the extension in a throwaway GNOME Shell
+make zip          # build dist/middle-drag-gestures@swad.shell-extension.zip
+make install      # redeploy everything
+make clean
 ```
 
 `verify-extension.sh` exists because GNOME Shell caches extension code for the
