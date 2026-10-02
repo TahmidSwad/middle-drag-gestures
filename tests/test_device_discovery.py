@@ -104,5 +104,34 @@ class ActionMappingTests(unittest.TestCase):
         )
 
 
+class StaleExtensionHintTests(unittest.TestCase):
+    """A Shell with pre-rename extension code must be reported usefully."""
+
+    def test_unknown_method_is_detected(self):
+        error = (
+            "org.freedesktop.DBus.Error.UnknownMethod: No such interface "
+            "'org.gnome.Shell.Extensions.MiddleDrag' on object "
+            "/org/gnome/Shell/Extensions/MiddleDrag"
+        )
+        self.assertTrue(daemon.is_unknown_method_error(error))
+
+    def test_method_name_variant_is_detected(self):
+        error = "GDBus.Error:...UnknownMethod: Method \"ShowOverview\" not found"
+        self.assertTrue(daemon.is_unknown_method_error(error))
+
+    def test_unrelated_errors_are_not_flagged(self):
+        self.assertFalse(
+            daemon.is_unknown_method_error(
+                "org.freedesktop.DBus.Error.ServiceUnknown: "
+                "Name 'org.gnome.Shell.Extensions.MiddleDrag' is not"
+            )
+        )
+        self.assertFalse(
+            daemon.is_unknown_method_error(
+                "org.freedesktop.DBus.Error.Timeout: Timeout was reached"
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

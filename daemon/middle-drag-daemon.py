@@ -372,6 +372,17 @@ class SettingsWatcher:
         )
 
 
+def is_unknown_method_error(exc: Exception) -> bool:
+    """True when the extension does not implement the called method (pure).
+
+    This is what a GNOME Shell that still runs pre-rename extension code
+    answers, so the daemon can turn a cryptic D-Bus error into an actionable
+    hint (extension.js is only reloaded at login).
+    """
+    text = str(exc)
+    return "UnknownMethod" in text or "unknown method" in text.lower()
+
+
 # ---------------------------------------------------------------------------
 # D-Bus bridge
 # ---------------------------------------------------------------------------
@@ -389,6 +400,7 @@ class GnomeBridge:
         self._bus = None
         self._missing = False
         self._failed = False
+        self._stale = False
 
     def call(self, method: str | None) -> bool:
         if method is None:
@@ -418,6 +430,15 @@ class GnomeBridge:
         except DBusException as exc:
             self._failed = True
             LOG.warning("D-Bus call %s() failed: %s", method, exc)
+            if is_unknown_method_error(exc) and not self._stale:
+                self._stale = True
+                LOG.warning(
+                    "this GNOME Shell does not implement %s(): it is still "
+                    "running the old extension code. Log out and log back in "
+                    "to load the updated extension.js (extension JS is only "
+                    "reloaded at login on Wayland)",
+                    method,
+                )
             self._bus = None
             return False
         except Exception as exc:  # never let a bus problem kill the daemon
