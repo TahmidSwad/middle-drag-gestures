@@ -10,16 +10,33 @@
 #   ~/.config/systemd/user/middle-drag-daemon.service
 #   /etc/udev/rules.d/99-middle-drag-uinput.rules      (root, via sudo)
 #
-# Idempotent: safe to re-run after every code change.
+# Contract (this is the shipping installer):
+#
+#   * preflight first - every dependency, source-file, device and privilege
+#     check runs before a single byte is written, so a failed check can never
+#     leave a half-installed system behind
+#   * single pass     - one run, then at most ONE logout/login (GNOME loads
+#     extension code and supplementary groups only at login)
+#   * idempotent      - safe to re-run after every code change; already
+#     correct steps are detected and skipped
 #
 # Usage:
-#   ./scripts/install.sh
+#   ./scripts/install.sh [--user-only] [--no-start] [--help]
+#
+#   --user-only  skip every root step (modprobe, udev rule, input group).
+#                Intended for CI/tests: the daemon cannot work until the
+#                privileged steps have been performed.
+#   --no-start   install and enable everything but do not start the daemon,
+#                so tests do not grab the physical mouse.
 #
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UUID="middle-drag-gestures@swad"
-SCHEMA_ID="org.gnome.shell.extensions.middle-drag"
+# shellcheck source=scripts/lib.sh
+. "$PROJECT_DIR/scripts/lib.sh"
+UUID="$MDG_UUID"
+SCHEMA_ID="$MDG_SCHEMA"
+CURRENT_USER="${USER:-$(id -un)}"
 
 EXT_SRC="$PROJECT_DIR/extension/$UUID"
 EXT_DST="${HOME}/.local/share/gnome-shell/extensions/$UUID"
@@ -33,11 +50,25 @@ UDEV_SRC="$PROJECT_DIR/udev/99-middle-drag-uinput.rules"
 UDEV_DST="/etc/udev/rules.d/99-middle-drag-uinput.rules"
 UDEV_LEGACY="/etc/udev/rules.d/99-uinput.rules"
 
-info()  { printf '  %s\n' "$*"; }
-step()  { printf '\n%s\n' "$*"; }
-die()   { printf '\nError: %s\n' "$*" >&2; exit 1; }
+# Called before anything has been written: the system is untouched.
+fail_preflight() {
+    printf '\nError: %s\n' "$*" >&2
+    printf 'Nothing was installed or modified.\n' >&2
+    exit 1
+}
 
-# Root helper: only udev rules need privileges.
+# Called after installation has started: point at the rollback path.
+die() {
+    printf '\nError: %s\n' "$*" >&2
+    printf 'Run ./scripts/uninstall.sh to remove any partial install.\n' >&2
+    exit 1
+}
+
+usage() {
+    sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# Root helper: only udev rules, usermod and modprobe need privileges.
 as_root() {
     if [ "$(id -u)" = 0 ]; then
         "$@"
@@ -45,32 +76,28 @@ as_root() {
         sudo "$@"
     fi
 }
+
+USER_ONLY=0
+NO_START=0
+for arg in "$@"; do
+    case "$arg" in
+        --user-only) USER_ONLY=1 ;;
+        --no-start)  NO_START=1 ;;
+        -h|--help)   usage; exit 0 ;;
+        *)           fail_preflight "unknown option: $arg (see --help)" ;;
+    esac
+done
+
 printf 'Installing Middle-Drag Gestures\n'
 printf '===============================\n'
 
 # ---------------------------------------------------------------------------
-# Privileges: the udev rule is the only step that needs root.
-#   * interactive  -> ask for the password once, cache it
-#   * passwordless -> use it directly
-#   * non-interactive without cached credentials -> skip the udev step with
-#     a clear warning instead of hanging on a prompt
+# 0. Preflight - NOTHING is written until every check below has passed.
 # ---------------------------------------------------------------------------
-if [ "$(id -u)" = 0 ]; then
-    HAVE_ROOT=1
-elif [ -t 0 ] && sudo -v 2>/dev/null; then
-    HAVE_ROOT=1
-elif sudo -n true 2>/dev/null; then
-    HAVE_ROOT=1
-else
-    HAVE_ROOT=0
-fi
+step "Preflight checks"
 
-# ---------------------------------------------------------------------------
-# 1. Dependency checks
-# ---------------------------------------------------------------------------
-step "Checking dependencies"
-
-command -v gnome-shell >/dev/null 2>&1 || die "gnome-shell not found - this project only targets GNOME"
+command -v gnome-shell >/dev/null 2>&1 ||
+    fail_preflight "gnome-shell not found - this project only targets GNOME"
 info "gnome-shell: $(gnome-shell --version 2>/dev/null | head -1)"
 
 case "${XDG_CURRENT_DESKTOP:-}" in
@@ -78,73 +105,92 @@ case "${XDG_CURRENT_DESKTOP:-}" in
     *) info "warning: XDG_CURRENT_DESKTOP='${XDG_CURRENT_DESKTOP:-}' does not look like GNOME" ;;
 esac
 
-command -v python3 >/dev/null 2>&1 || die "python3 not found"
-command -v gdbus >/dev/null 2>&1 || die "gdbus not found (package glib2)"
-command -v glib-compile-schemas >/dev/null 2>&1 || die "glib-compile-schemas not found (package glib2)"
-command -v systemctl >/dev/null 2>&1 || die "systemctl not found"
+command -v python3 >/dev/null 2>&1 || fail_preflight "python3 not found"
+command -v systemctl >/dev/null 2>&1 || fail_preflight "systemctl not found"
+command -v glib-compile-schemas >/dev/null 2>&1 ||
+    fail_preflight "glib-compile-schemas not found (package glib2 / libglib2.0-bin)"
+
+if ! command -v gnome-extensions >/dev/null 2>&1; then
+    info "warning: gnome-extensions not found - the extension cannot be enabled from this shell"
+fi
 
 for module in evdev dbus gi; do
     if ! python3 -c "import $module" >/dev/null 2>&1; then
         case "$module" in
-            evdev) hint="sudo dnf install python3-evdev" ;;
-            dbus)  hint="sudo dnf install python3-dbus" ;;
-            gi)    hint="sudo dnf install python3-gobject" ;;
+            evdev) hint="python3-evdev (dnf) / python3-evdev (apt)" ;;
+            dbus)  hint="python3-dbus (dnf) / python3-dbus (apt)" ;;
+            gi)    hint="python3-gobject (dnf) / python3-gi (apt)" ;;
         esac
-        die "python3 cannot import '$module' - install it with: $hint"
+        fail_preflight "python3 cannot import '$module' - install the package '$hint'"
     fi
 done
 info "python3 modules: evdev, dbus, gi"
 
-if [ ! -e /dev/uinput ]; then
-    if command -v modprobe >/dev/null 2>&1; then
-        info "loading the uinput kernel module"
-        as_root modprobe uinput || die "could not load the uinput module"
-    else
-        die "/dev/uinput is missing and modprobe is unavailable"
-    fi
-fi
-info "/dev/uinput present"
+for src in "$DAEMON_SRC" "$UNIT_SRC" "$SCHEMA_SRC" \
+           "$EXT_SRC/extension.js" "$EXT_SRC/prefs.js" "$EXT_SRC/metadata.json"; do
+    [ -f "$src" ] || fail_preflight "missing source file: $src"
+done
+info "source files present"
 
-# ---------------------------------------------------------------------------
-# 2. input group membership
-# ---------------------------------------------------------------------------
-step "Checking input group membership"
+# What will this run need root for?  Collected first so the installer can
+# either authenticate once up front or refuse before changing anything.
+NEED_ROOT=()
+[ -e /dev/uinput ] || NEED_ROOT+=("/dev/uinput is missing (modprobe uinput)")
+[ -f "$UDEV_DST" ] || NEED_ROOT+=("udev rule $UDEV_DST is not installed")
+id -nG "$CURRENT_USER" | grep -qw input ||
+    NEED_ROOT+=("user '$CURRENT_USER' is not in the 'input' group")
 
-if id -nG "$USER" | grep -qw input; then
-    info "user '$USER' is in the input group"
+HAVE_ROOT=0
+SKIPPED=()
+if [ "${#NEED_ROOT[@]}" -eq 0 ]; then
+    HAVE_ROOT=1
+    info "no privileged step required (already configured)"
+elif [ "$USER_ONLY" = 1 ]; then
+    info "warning: --user-only, privileged steps are skipped:"
+    for reason in "${NEED_ROOT[@]}"; do info "  - $reason"; done
+    SKIPPED=("${NEED_ROOT[@]}")
+elif [ "$(id -u)" = 0 ]; then
+    HAVE_ROOT=1
+elif [ -t 0 ] && sudo -v 2>/dev/null; then
+    HAVE_ROOT=1
+    info "sudo: authenticated"
+elif sudo -n true 2>/dev/null; then
+    HAVE_ROOT=1
 else
-    if [ "$HAVE_ROOT" = 0 ]; then
-        die "'$USER' is not in the 'input' group and this shell cannot run sudo.
-Run this installer from a terminal so it can ask for your password:
-  sudo usermod -aG input \$USER
-then log out and back in, and run the installer again."
-    fi
-    info "adding '$USER' to the input group"
-    as_root usermod -aG input "$USER"
-    cat <<EOF
-
-  '$USER' was added to the 'input' group.
-
-  Log out and log back in, then run this script again.
-EOF
-    exit 0
+    msg="this installation needs root for:"
+    for reason in "${NEED_ROOT[@]}"; do msg="$msg
+  - $reason"; done
+    fail_preflight "$msg
+Run this installer from a terminal where sudo can ask for your password,
+or pass --user-only to install the user-writable parts only."
 fi
 
 # ---------------------------------------------------------------------------
-# 3. udev rule
+# 1. uinput device node + udev rule
 # ---------------------------------------------------------------------------
+step "Ensuring /dev/uinput is usable"
+
+if [ ! -e /dev/uinput ]; then
+    if [ "$HAVE_ROOT" = 1 ]; then
+        command -v modprobe >/dev/null 2>&1 ||
+            die "/dev/uinput is missing and modprobe is unavailable"
+        info "loading the uinput kernel module"
+        as_root modprobe uinput || die "could not load the uinput kernel module"
+        [ -e /dev/uinput ] || die "modprobe ran but /dev/uinput is still missing"
+    else
+        SKIPPED+=("/dev/uinput is missing (modprobe uinput)")
+        info "skipped: /dev/uinput is missing and --user-only was given"
+    fi
+else
+    info "/dev/uinput present"
+fi
+
 step "Installing udev rule"
 
-if [ "$HAVE_ROOT" = 0 ]; then
-    info "skipped: cannot elevate privileges from this shell (no sudo tty)."
-    if [ -f "$UDEV_DST" ] || [ -f "$UDEV_LEGACY" ]; then
-        info "an existing udev rule for /dev/uinput was left in place"
-    else
-        info "WARNING: without this rule the daemon cannot open /dev/uinput."
-        info "Run this installer from a terminal, or install it manually:"
-        info "  sudo install -m 0644 $UDEV_SRC $UDEV_DST"
-        info "  sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=misc"
-    fi
+if [ "$USER_ONLY" = 1 ]; then
+    info "skipped (--user-only)"
+elif [ -f "$UDEV_DST" ] && cmp -s "$UDEV_SRC" "$UDEV_DST"; then
+    info "already up to date ($UDEV_DST)"
 else
     if [ "$(id -u)" = 0 ]; then
         install -m 0644 "$UDEV_SRC" "$UDEV_DST"
@@ -154,27 +200,45 @@ else
     fi
     info "installed $UDEV_DST"
 
-    if [ -f "$UDEV_LEGACY" ] && grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
-        as_root rm -f "$UDEV_LEGACY"
-        info "removed legacy $UDEV_LEGACY"
-    fi
-
     as_root udevadm control --reload-rules
     as_root udevadm trigger --subsystem-match=misc
     info "udev rules reloaded"
 fi
 
+if [ "$HAVE_ROOT" = 1 ] && [ -f "$UDEV_LEGACY" ] &&
+   grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
+    as_root rm -f "$UDEV_LEGACY"
+    info "removed legacy $UDEV_LEGACY"
+fi
+
 if [ -e /dev/uinput ]; then
-    perms="$(ls -l /dev/uinput | awk '{print $1, $3, $4}')"
-    info "/dev/uinput: $perms"
-    if [ ! -w /dev/uinput ]; then
-        info "warning: /dev/uinput is not writable by '$USER' yet - it becomes"
-        info "         effective after the next login (or: udevadm trigger)"
-    fi
+    info "/dev/uinput: $(ls -l /dev/uinput | awk '{print $1, $3, $4}')"
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Daemon + systemd user service
+# 2. input group membership
+#
+# The daemon opens /dev/input/event* (0660 root:input, set by the distro's
+# 50-udev-default.rules) and /dev/uinput (0660 root:input, set by our rule).
+# Supplementary groups only apply to NEW sessions, so a membership added here
+# takes effect at the next login - which the user already needs for GNOME to
+# reload extension.js.  That is why this installer never asks for a second run.
+# ---------------------------------------------------------------------------
+step "Checking input group membership"
+
+GROUP_ADDED=0
+if id -nG "$CURRENT_USER" | grep -qw input; then
+    info "user '$CURRENT_USER' is in the input group"
+elif [ "$USER_ONLY" = 1 ]; then
+    info "warning: '$CURRENT_USER' is not in the input group; the daemon cannot work"
+else
+    info "adding '$CURRENT_USER' to the input group"
+    as_root usermod -aG input "$CURRENT_USER"
+    GROUP_ADDED=1
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Daemon + systemd user service
 # ---------------------------------------------------------------------------
 step "Installing the input daemon"
 
@@ -187,9 +251,16 @@ info "$UNIT_DST"
 systemctl --user daemon-reload
 
 # ---------------------------------------------------------------------------
-# 5. GNOME extension + GSettings schema
+# 4. GNOME extension + GSettings schema
 # ---------------------------------------------------------------------------
 step "Installing the GNOME Shell extension"
+
+EXT_CHANGED=0
+if ! cmp -s "$EXT_SRC/extension.js" "$EXT_DST/extension.js" 2>/dev/null ||
+   ! cmp -s "$EXT_SRC/prefs.js" "$EXT_DST/prefs.js" 2>/dev/null ||
+   ! cmp -s "$EXT_SRC/metadata.json" "$EXT_DST/metadata.json" 2>/dev/null; then
+    EXT_CHANGED=1
+fi
 
 install -d -m 0755 "$EXT_DST" "$EXT_DST/schemas"
 install -m 0644 "$EXT_SRC/extension.js"  "$EXT_DST/extension.js"
@@ -207,55 +278,101 @@ info "$EXT_DST"
 # to metadata.json, and enable() reads it - without this the extension
 # throws as soon as it is enabled.
 install -m 0644 "$SCHEMA_SRC" "$EXT_DST/schemas/"
-glib-compile-schemas --strict "$EXT_DST/schemas"
-if [ ! -f "$EXT_DST/schemas/gschemas.compiled" ]; then
+glib-compile-schemas --strict "$EXT_DST/schemas" ||
+    die "failed to compile $EXT_DST/schemas"
+[ -f "$EXT_DST/schemas/gschemas.compiled" ] ||
     die "failed to compile $EXT_DST/schemas/gschemas.compiled"
-fi
 info "extension schema compiled"
 
 install -d -m 0755 "$SCHEMA_DST_DIR"
 install -m 0644 "$SCHEMA_SRC" "$SCHEMA_DST_DIR/"
-glib-compile-schemas --strict "$SCHEMA_DST_DIR"
-if [ ! -f "$SCHEMA_DST_DIR/gschemas.compiled" ]; then
+glib-compile-schemas --strict "$SCHEMA_DST_DIR" ||
+    die "failed to compile $SCHEMA_DST_DIR"
+[ -f "$SCHEMA_DST_DIR/gschemas.compiled" ] ||
     die "failed to compile $SCHEMA_DST_DIR/gschemas.compiled"
-fi
 info "user schema installed ($SCHEMA_DST_DIR)"
 
-if ! gsettings get "$SCHEMA_ID" threshold >/dev/null 2>&1; then
+gsettings get "$SCHEMA_ID" threshold >/dev/null 2>&1 ||
     die "schema $SCHEMA_ID is not usable by gsettings"
-fi
 info "gsettings can read $SCHEMA_ID"
 
 # ---------------------------------------------------------------------------
-# 6. Enable everything
+# 5. Enable everything
 # ---------------------------------------------------------------------------
 step "Enabling extension and daemon"
 
-if gnome-extensions enable "$UUID" 2>/dev/null; then
-    info "extension enabled"
+if mdg_extension_enable; then
+    if [ "${MDG_EXTENSION_ACTIVE:-0}" = 1 ]; then
+        info "extension enabled (active now)"
+    else
+        info "extension enabled (the Shell scans extensions only at login)"
+    fi
 else
-    info "could not enable the extension from this shell - it will be"
-    info "enabled on next login, or run: gnome-extensions enable $UUID"
+    info "warning: could not record the extension as enabled - run:"
+    info "  gnome-extensions enable $UUID"
 fi
 
-systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 || true
-if systemctl --user restart middle-drag-daemon.service; then
-    info "daemon restarted (enabled at login)"
+systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
+    die "could not enable middle-drag-daemon.service"
+
+if [ "$GROUP_ADDED" = 1 ]; then
+    info "daemon enabled; it starts automatically at the next login"
+    info "(the 'input' group only applies to new sessions)"
+elif [ "$NO_START" = 1 ]; then
+    info "daemon enabled but not started (--no-start)"
 else
-    info "warning: the daemon did not start - see:"
-    info "  journalctl --user -u middle-drag-daemon.service -n 50"
+    if systemctl --user restart middle-drag-daemon.service; then
+        info "daemon restarted (enabled at login)"
+    else
+        info "warning: the daemon did not start - see:"
+        info "  journalctl --user -u middle-drag-daemon.service -n 50"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Summary
+# 6. Summary
 # ---------------------------------------------------------------------------
 sleep 1
 printf '\n%s\n' "----------------------------------------------------------------"
-if systemctl --user is-active --quiet middle-drag-daemon.service; then
+
+if [ "${#SKIPPED[@]}" -gt 0 ]; then
+    printf '%s\n' "Middle-Drag Gestures installed INCOMPLETELY (--user-only)."
+    printf '%s\n' "Skipped, so the daemon will not work until you run:"
+    for reason in "${SKIPPED[@]}"; do printf '  - %s\n' "$reason"; done
+    printf '%s\n' "Re-run this installer from a terminal with sudo."
+elif [ "$GROUP_ADDED" = 1 ]; then
+    printf '%s\n' "Middle-Drag Gestures installed. The daemon starts at next login."
+elif [ "$NO_START" = 1 ]; then
+    printf '%s\n' "Middle-Drag Gestures installed (daemon enabled, not started)."
+elif systemctl --user is-active --quiet middle-drag-daemon.service; then
     printf '%s\n' "Middle-Drag Gestures installed successfully."
 else
     printf '%s\n' "Middle-Drag Gestures installed, but the daemon is not running."
     printf '%s\n' "Check: journalctl --user -u middle-drag-daemon.service -n 100"
+fi
+
+# What actually requires the single relogin?
+RELOGIN=()
+if [ "$GROUP_ADDED" = 1 ]; then
+    RELOGIN+=("'input' group membership applies to new sessions only")
+fi
+if [ "$EXT_CHANGED" = 1 ]; then
+    RELOGIN+=("GNOME Shell loads extension code only at login")
+fi
+if [ "${MDG_EXTENSION_ACTIVE:-1}" = 0 ]; then
+    RELOGIN+=("the Shell only scans extension directories at login")
+fi
+
+if [ "${#RELOGIN[@]}" -gt 0 ]; then
+    printf '\n%s\n' "  ACTION REQUIRED: log out and log back in (once)."
+    for reason in "${RELOGIN[@]}"; do printf '    - %s\n' "$reason"; done
+    cat <<'EOF'
+
+  Nothing else is needed: everything listed above becomes active with
+  that single relogin.
+EOF
+else
+    printf '\n%s\n' "No relogin required - nothing that needs it changed."
 fi
 
 cat <<'EOF'
@@ -270,10 +387,4 @@ Gesture configuration:
 Configuration:
   gnome-extensions prefs middle-drag-gestures@swad
   gsettings list-recursively org.gnome.shell.extensions.middle-drag
-
-The daemon starts automatically at login.
-
-NOTE: GNOME Shell loads extension code only at login. If you just updated
-      extension.js, log out and log back in (or reboot) for the new code to
-      take effect. The daemon restarts immediately.
 EOF

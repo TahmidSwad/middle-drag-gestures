@@ -5,7 +5,9 @@
 #
 set -euo pipefail
 
-UUID="middle-drag-gestures@swad"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib.sh
+. "$PROJECT_DIR/scripts/lib.sh"
 
 printf 'Disabling Middle-Drag Gestures\n'
 
@@ -14,10 +16,8 @@ if systemctl --user list-unit-files middle-drag-daemon.service >/dev/null 2>&1; 
     printf '  daemon stopped and disabled\n'
 fi
 
-if command -v gnome-extensions >/dev/null 2>&1; then
-    gnome-extensions disable "$UUID" || true
-    printf '  extension disabled\n'
-fi
+mdg_extension_disable
+printf '  extension disabled\n'
 
 cat <<'EOF'
 
