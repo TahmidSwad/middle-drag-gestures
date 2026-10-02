@@ -21,13 +21,18 @@
 #     correct steps are detected and skipped
 #
 # Usage:
-#   ./scripts/install.sh [--user-only] [--no-start] [--help]
+#   ./scripts/install.sh [--user-only] [--no-start] [--no-systemd] [--help]
 #
 #   --user-only  skip every root step (modprobe, udev rule, input group).
 #                Intended for CI/tests: the daemon cannot work until the
 #                privileged steps have been performed.
 #   --no-start   install and enable everything but do not start the daemon,
 #                so tests do not grab the physical mouse.
+#   --no-systemd do not talk to systemd at all (no daemon-reload, enable or
+#                start).  Needed when installing into a HOME that differs
+#                from the one the user manager started with: the manager
+#                resolves unit paths from its own environment, so enable
+#                would fail there for reasons unrelated to this product.
 #
 set -euo pipefail
 set -E   # make the ERR trap fire inside functions too
@@ -68,7 +73,7 @@ die() {
 }
 
 usage() {
-    sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # ---------------------------------------------------------------------------
@@ -138,9 +143,12 @@ rollback() {
         udevadm control --reload-rules 2>/dev/null || true
         printf '  removed %s\n' "$UDEV_DST" >&2
         if [ -n "$ORIG_UINPUT_PERMS" ] && [ -e /dev/uinput ]; then
-            # shellcheck disable=SC2086
-            chmod $ORIG_UINPUT_PERMS /dev/uinput 2>/dev/null || true
-            printf '  restored /dev/uinput to %s\n' "$ORIG_UINPUT_PERMS" >&2
+            if mdg_apply_uinput_perms "$ORIG_UINPUT_PERMS"; then
+                printf '  restored /dev/uinput to %s\n' "$ORIG_UINPUT_PERMS" >&2
+            else
+                printf '  warning: could not restore /dev/uinput to %s\n' \
+                    "$ORIG_UINPUT_PERMS" >&2
+            fi
         fi
         UDEV_CREATED=0
     fi
@@ -170,11 +178,6 @@ trap on_unexpected_error ERR
 # can undo exactly that - and nothing that was already there (a pre-existing
 # 'input' group membership is never removed).
 # ---------------------------------------------------------------------------
-state_get() {
-    [ -f "$MDG_STATE_FILE" ] || return 1
-    sed -n "s/^$1=//p" "$MDG_STATE_FILE" | head -n 1
-}
-
 write_state() {
     local prev_group prev_perms version new_group
     prev_group="$(state_get group_added || true)"
@@ -212,10 +215,12 @@ as_root() {
 
 USER_ONLY=0
 NO_START=0
+NO_SYSTEMD=0
 for arg in "$@"; do
     case "$arg" in
         --user-only) USER_ONLY=1 ;;
         --no-start)  NO_START=1 ;;
+        --no-systemd) NO_SYSTEMD=1; NO_START=1 ;;
         -h|--help)   usage; exit 0 ;;
         *)           fail_preflight "unknown option: $arg (see --help)" ;;
     esac
@@ -392,7 +397,11 @@ note_created "$UNIT_DST"
 install -D -m 0644 "$UNIT_SRC" "$UNIT_DST"
 info "$UNIT_DST"
 
-systemctl --user daemon-reload
+if [ "$NO_SYSTEMD" = 1 ]; then
+    info "daemon-reload skipped (--no-systemd)"
+else
+    systemctl --user daemon-reload
+fi
 
 # ---------------------------------------------------------------------------
 # 4. GNOME extension + GSettings schema
@@ -487,15 +496,20 @@ else
     info "  gnome-extensions enable $UUID"
 fi
 
-systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
-    die "could not enable middle-drag-daemon.service"
-
-if [ "$GROUP_ADDED" = 1 ]; then
+if [ "$NO_SYSTEMD" = 1 ]; then
+    info "systemd untouched (--no-systemd): no daemon-reload, enable or start"
+elif [ "$GROUP_ADDED" = 1 ]; then
+    systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
+        die "could not enable middle-drag-daemon.service"
     info "daemon enabled; it starts automatically at the next login"
     info "(the 'input' group only applies to new sessions)"
 elif [ "$NO_START" = 1 ]; then
+    systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
+        die "could not enable middle-drag-daemon.service"
     info "daemon enabled but not started (--no-start)"
 else
+    systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
+        die "could not enable middle-drag-daemon.service"
     if systemctl --user restart middle-drag-daemon.service; then
         info "daemon restarted (enabled at login)"
     else
@@ -521,6 +535,9 @@ if [ "${#SKIPPED[@]}" -gt 0 ]; then
     printf '%s\n' "Re-run this installer from a terminal with sudo."
 elif [ "$GROUP_ADDED" = 1 ]; then
     printf '%s\n' "Middle-Drag Gestures installed. The daemon starts at next login."
+elif [ "$NO_SYSTEMD" = 1 ]; then
+    printf '%s\n' "Middle-Drag Gestures installed (systemd untouched: the unit was"
+    printf '%s\n' "not enabled or started - that is what --no-systemd means)."
 elif [ "$NO_START" = 1 ]; then
     printf '%s\n' "Middle-Drag Gestures installed (daemon enabled, not started)."
 elif systemctl --user is-active --quiet middle-drag-daemon.service; then

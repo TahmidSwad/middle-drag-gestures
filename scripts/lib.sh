@@ -16,6 +16,41 @@ info() { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
+# Install state
+#
+# ~/.local/state/middle-drag-gestures/state is written by install.sh after a
+# fully successful run and read by uninstall.sh.  It records what this product
+# changed outside the user's own files - specifically whether WE added the
+# 'input' group membership (so --purge never removes a membership that was
+# already there) and how /dev/uinput looked before our udev rule touched it.
+# ---------------------------------------------------------------------------
+
+# state_get <key> -> value, or non-zero when there is no state file yet
+state_get() {
+    [ -f "$MDG_STATE_FILE" ] || return 1
+    sed -n "s/^$1=//p" "$MDG_STATE_FILE" | head -n 1
+}
+
+# mdg_apply_uinput_perms "<mode> <uid> <gid>" - put /dev/uinput back exactly
+# as it was found (`stat -c '%a %u %g'`).  Deleting the udev rule does not
+# change the permissions already applied to the node, so without this the
+# device keeps looking configured until the next reboot, when the kernel
+# recreates it as 0600 root:root and the daemon silently dies.
+# Returns non-zero when the privileges are not available.
+mdg_apply_uinput_perms() {
+    local mode uid gid
+    read -r mode uid gid <<< "$1"
+    [ -n "${mode:-}" ] && [ -n "${uid:-}" ] && [ -e /dev/uinput ] || return 1
+    if [ "$(id -u)" = 0 ]; then
+        chown "$uid:$gid" /dev/uinput 2>/dev/null &&
+            chmod "$mode" /dev/uinput 2>/dev/null
+    else
+        sudo -n chown "$uid:$gid" /dev/uinput 2>/dev/null &&
+            sudo -n chmod "$mode" /dev/uinput 2>/dev/null
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Enabling / disabling the extension
 # ---------------------------------------------------------------------------
 #
@@ -55,7 +90,12 @@ def read(key):
         ["gsettings", "get", "org.gnome.shell", key],
         capture_output=True, text=True, check=True,
     )
-    return ast.literal_eval(out.stdout.strip())
+    raw = out.stdout.strip()
+    # An unset array prints as "@as []" (a GVariant type annotation), which
+    # ast.literal_eval rejects - this is the normal state on a fresh machine.
+    if raw.startswith("@") and " " in raw:
+        raw = raw.split(" ", 1)[1]
+    return ast.literal_eval(raw)
 
 
 def write(key, values):
@@ -124,7 +164,12 @@ def read(key):
         ["gsettings", "get", "org.gnome.shell", key],
         capture_output=True, text=True, check=True,
     )
-    return ast.literal_eval(out.stdout.strip())
+    raw = out.stdout.strip()
+    # An unset array prints as "@as []" (a GVariant type annotation), which
+    # ast.literal_eval rejects - this is the normal state on a fresh machine.
+    if raw.startswith("@") and " " in raw:
+        raw = raw.split(" ", 1)[1]
+    return ast.literal_eval(raw)
 
 
 def write(key, values):
