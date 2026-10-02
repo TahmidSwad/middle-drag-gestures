@@ -1,0 +1,22 @@
+# Packaging artifacts
+*.zip
+*.rpm
+*.spec.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Build
+build/
+dist/

@@ -1,0 +1,13 @@
+[Unit]
+Description=Global Middle-Drag Mouse Gestures
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/middle-drag-daemon.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
