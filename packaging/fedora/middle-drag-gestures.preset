@@ -1,0 +1,18 @@
+# systemd user-unit preset for middle-drag-gestures.
+#
+# Fedora ships 99-default-disable.preset containing a bare `disable *`, and
+# %systemd_user_post runs `systemctl --global preset` through
+# systemd-update-helper.  Without this file the answer is always "disabled",
+# so every account had to run `systemctl --user enable` by hand - the package
+# looked installed but dead, which is exactly what a user sees as "it does
+# not work".
+#
+# With it, preset --global creates
+#   /etc/systemd/user/graphical-session.target.wants/middle-drag-daemon.service
+# for every account: the daemon starts at the next login, and can be started
+# right now in the current session with
+#   systemctl --user start middle-drag-daemon.service
+#
+# The 50- prefix sorts ahead of Fedora's 90-* and 99-* presets, and systemd
+# takes the first matching entry, so `enable` here wins over `disable *`.
+enable middle-drag-daemon.service

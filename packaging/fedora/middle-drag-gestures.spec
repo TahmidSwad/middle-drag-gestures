@@ -44,12 +44,17 @@
 # running Shell, and the daemon grabs the mouse and answers GetStatus on
 # org.gnome.Shell.Extensions.MiddleDrag.
 #
-# A package cannot perform per-user steps, so these three stay manual
+# A package cannot perform per-user steps, so these two stay manual
 # (docs/installation.md):
 #
 #   sudo usermod -aG input "$USER"                  # applies at next login
 #   gnome-extensions enable middle-drag-gestures@swad
-#   systemctl --user enable --now middle-drag-daemon.service
+#
+# The unit needs no command: 50-middle-drag-gestures.preset makes the
+# install scriptlet's `systemctl --global preset` enable it for every
+# account (verified with `systemctl --root --global preset` in a throwaway
+# root: disabled before the preset file, enabled after).  It starts at the
+# next login, or at once with `systemctl --user start middle-drag-daemon.service`.
 #
 # Removal has one manual half too: run `gnome-extensions disable
 # middle-drag-gestures@swad` first, because %preun cannot write the
@@ -122,6 +127,15 @@ sed -e 's|^ExecStart=.*|ExecStart=%{_libexecdir}/middle-drag-daemon|' \
     > %{buildroot}%{_userunitdir}/middle-drag-daemon.service
 chmod 0644 %{buildroot}%{_userunitdir}/middle-drag-daemon.service
 
+# --- systemd user preset ---------------------------------------------------
+# Fedora's default policy for user units is `disable *` (see
+# 99-default-disable.preset), and the install scriptlet applies that policy
+# with `systemctl --global preset`.  Without this file the daemon installs
+# disabled in every account - the package looks installed but does nothing
+# until each user runs `systemctl --user enable` themselves.
+install -D -p -m 0644 packaging/fedora/middle-drag-gestures.preset \
+    %{buildroot}%{_userpresetdir}/50-middle-drag-gestures.preset
+
 # --- GNOME Shell extension ------------------------------------------------
 install -d -m 0755 %{buildroot}%{extensiondir}
 cp -p extension/%{uuid}/extension.js \
@@ -178,6 +192,7 @@ fi
 %{_libexecdir}/middle-drag-daemon
 %{_udevrulesdir}/99-middle-drag-uinput.rules
 %{_userunitdir}/middle-drag-daemon.service
+%{_userpresetdir}/50-middle-drag-gestures.preset
 %{extensiondir}/
 %{_datadir}/glib-2.0/schemas/%{schema_id}.gschema.xml
 

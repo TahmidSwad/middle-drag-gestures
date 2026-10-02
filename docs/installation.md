@@ -172,13 +172,23 @@ rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
 ```
 
-A package cannot perform per-user steps, so afterwards:
+The unit **enables itself**. Fedora's default policy for user units is
+`disable *` (`/usr/lib/systemd/user-preset/99-default-disable.preset`), and
+`%post` applies that policy with `systemctl --global preset` - so the package
+ships `50-middle-drag-gestures.preset`, without which it installs dead in
+every account. With it, preset resolves to `enabled` and a symlink appears in
+`/etc/systemd/user/graphical-session.target.wants/` for every account.
+
+A package still cannot act inside *your* session, so afterwards:
 
 ```bash
 sudo usermod -aG input "$USER"                        # applies at the NEXT login
 gnome-extensions enable middle-drag-gestures@swad     # immediate
-systemctl --user enable --now middle-drag-daemon.service   # immediate
+systemctl --user start middle-drag-daemon.service     # immediate; already enabled
 ```
+
+`start` only covers the current session - the next login starts the daemon
+by itself.
 
 **Do not skip the `input` group.** `dnf install` does not add you to it, and
 without it the daemon cannot open `/dev/input` or `/dev/uinput` (both are
@@ -191,7 +201,10 @@ may still work if your shell inherited the group from an earlier login.
 > rule really fired (`/dev/uinput` → `0660 root:input`), `gsettings` resolved
 > the system schema (`threshold = 100`), the extension reached
 > `State: ACTIVE` in a running Shell, and the daemon grabbed the mouse and
-> answered `GetStatus` over D-Bus.
+> answered `GetStatus` over D-Bus. Installing a second time after
+> `dnf remove` reproduced all of it. The preset's effect was checked with
+> `systemctl --root … --global preset` in a throwaway root: `disabled`
+> without the preset file, `enabled` with it.
 
 ---
 

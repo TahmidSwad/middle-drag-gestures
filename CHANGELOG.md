@@ -46,6 +46,14 @@ companion `evdev`/`uinput` daemon).
   after install, the udev rule applied (`/dev/uinput` → `0660 root:input`),
   the extension reached `State: ACTIVE`, and the daemon grabbed the mouse and
   answered `GetStatus` over D-Bus.
+- systemd user preset `50-middle-drag-gestures.preset`. Fedora's default
+  policy for user units is `disable *`, and `%post` applies that policy with
+  `systemctl --global preset`, so without a preset the package installed with
+  the daemon disabled in every account: installed, `rpm -V` clean, and doing
+  nothing until each user ran `systemctl --user enable` by hand. Checked with
+  `systemctl --root … --global preset` in a throwaway root - `disabled`
+  before the preset file, `enabled` and linked from
+  `/etc/systemd/user/graphical-session.target.wants/` after it.
 - udev rule `udev/99-middle-drag-uinput.rules`.
 - Documentation: architecture, installation, troubleshooting.
 - Unit tests for gesture detection and device discovery.
