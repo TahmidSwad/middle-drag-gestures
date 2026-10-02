@@ -76,13 +76,22 @@ export default class MiddleDragGestures extends Extension {
             return;
         }
 
-        const settings = this.getSettings();
-        console.log(
-            `[MiddleDrag] D-Bus service ready (enabled=` +
-            `${settings.get_boolean('enabled')}, ` +
-            `threshold=${settings.get_int('threshold')}, ` +
-            `device=${settings.get_string('device')})`
-        );
+        // Settings are optional: the D-Bus service must work even when the
+        // schema is missing or broken, otherwise gestures die with it.
+        let status = '';
+        try {
+            const settings = this.getSettings();
+            status =
+                ` (enabled=${settings.get_boolean('enabled')}, ` +
+                `threshold=${settings.get_int('threshold')}, ` +
+                `device=${settings.get_string('device')})`;
+        } catch (e) {
+            console.error(
+                `[MiddleDrag] could not read settings: ${e}`
+            );
+        }
+
+        console.log(`[MiddleDrag] D-Bus service ready${status}`);
     }
 
     disable() {
@@ -137,17 +146,23 @@ export default class MiddleDragGestures extends Extension {
 
     // Introspectable status blob, mainly for docs/troubleshooting.
     GetStatus() {
-        const settings = this.getSettings();
-
-        return JSON.stringify({
+        const status = {
             uuid: this.uuid,
             version: this.metadata.version,
             shellVersion: this.metadata['shell-version'].join('.'),
             dbusName: BUS_NAME,
-            enabled: settings.get_boolean('enabled'),
-            threshold: settings.get_int('threshold'),
-            device: settings.get_string('device'),
-        });
+        };
+
+        try {
+            const settings = this.getSettings();
+            status.enabled = settings.get_boolean('enabled');
+            status.threshold = settings.get_int('threshold');
+            status.device = settings.get_string('device');
+        } catch (e) {
+            status.settingsError = String(e);
+        }
+
+        return JSON.stringify(status);
     }
 
     // -----------------------------------------------------------------

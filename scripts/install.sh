@@ -203,12 +203,22 @@ if [ -d "$EXT_SRC/icons" ]; then
 fi
 info "$EXT_DST"
 
-glib-compile-schemas "$EXT_DST/schemas"
+# The extension's own Gio.Settings looks for schemas/gschemas.compiled next
+# to metadata.json, and enable() reads it - without this the extension
+# throws as soon as it is enabled.
+install -m 0644 "$SCHEMA_SRC" "$EXT_DST/schemas/"
+glib-compile-schemas --strict "$EXT_DST/schemas"
+if [ ! -f "$EXT_DST/schemas/gschemas.compiled" ]; then
+    die "failed to compile $EXT_DST/schemas/gschemas.compiled"
+fi
 info "extension schema compiled"
 
 install -d -m 0755 "$SCHEMA_DST_DIR"
 install -m 0644 "$SCHEMA_SRC" "$SCHEMA_DST_DIR/"
-glib-compile-schemas "$SCHEMA_DST_DIR"
+glib-compile-schemas --strict "$SCHEMA_DST_DIR"
+if [ ! -f "$SCHEMA_DST_DIR/gschemas.compiled" ]; then
+    die "failed to compile $SCHEMA_DST_DIR/gschemas.compiled"
+fi
 info "user schema installed ($SCHEMA_DST_DIR)"
 
 if ! gsettings get "$SCHEMA_ID" threshold >/dev/null 2>&1; then
