@@ -33,6 +33,43 @@ gnome-extensions enable middle-drag-gestures@swad
 gnome-extensions info middle-drag-gestures@swad   # Enabled: Yes / State: ACTIVE
 ```
 
+#### `Extension middle-drag-gestures@swad does not exist`
+
+```text
+$ gnome-extensions enable middle-drag-gestures@swad
+Extension middle-drag-gestures@swad does not exist
+$ echo $?
+2
+```
+
+This is **not** a failed install. GNOME Shell scans the extension
+directories once, at login, and reports `does not exist` for anything the
+running Shell has not scanned yet - so it happens after a fresh
+`install.sh`, and after re-installing over a previous uninstall, until you
+log in again.
+
+`install.sh` knows this and therefore does not rely on the CLI: it writes the
+uuid into `org.gnome.shell enabled-extensions` directly, which the Shell
+honours on its next scan. Confirm it is in place:
+
+```bash
+gsettings get org.gnome.shell enabled-extensions
+#   ['middle-drag-gestures@swad', …]
+```
+
+Then log out and log back in; afterwards `gnome-extensions info` works
+normally. To test the extension *without* logging out, use
+`./scripts/verify-extension.sh` (it starts a separate, headless Shell that
+loads the files fresh from disk).
+
+#### It is enabled but not `ACTIVE`
+
+The Shell rejected it - look for the reason in the Shell journal:
+
+```bash
+journalctl -b /usr/bin/gnome-shell --no-pager | grep -i middledrag
+```
+
 ### You edited extension.js but nothing changed
 
 GNOME Shell caches extension code and metadata **for the whole session**.
@@ -231,6 +268,8 @@ virtual mouse are excluded.
 
 ## Reset everything
 
+Settings only (stay installed):
+
 ```bash
 gsettings reset org.gnome.shell.extensions.middle-drag enabled
 gsettings reset org.gnome.shell.extensions.middle-drag threshold
@@ -241,9 +280,19 @@ gsettings reset org.gnome.shell.extensions.middle-drag up-action
 gsettings reset org.gnome.shell.extensions.middle-drag down-action
 ```
 
+Everything (files, settings, install state):
+
+```bash
+./scripts/uninstall.sh --purge
+./scripts/verify-clean.sh --purge   # exit 0 only if nothing is left
+```
+
 ## Testing the layers by hand
 
 ```bash
+# the whole install/uninstall matrix against a throwaway HOME
+./tests/install_matrix.sh
+
 # extension, without restarting your session
 ./scripts/verify-extension.sh
 
@@ -254,3 +303,7 @@ python3 tests/integration_test.py
 # raw input, to prove the hardware is fine
 sudo libinput debug-events
 ```
+
+The integration test dispatches three assertions only when the extension is
+actually loaded in this session; on a machine where the product has been
+uninstalled they are reported as `SKIP`, not `FAIL`.

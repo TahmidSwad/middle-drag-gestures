@@ -34,6 +34,9 @@ set -u
 # writes to dbus-daemon's stderr.  Redirecting the `gnome-extensions` process
 # (as you would naturally do) captures nothing at all.  dbus-daemon inherits
 # the stderr of dbus-run-session, so redirecting before the exec catches it.
+UUID="middle-drag-gestures@swad"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 if [ -z "${MIDDLE_DRAG_VERIFY_INNER:-}" ]; then
     if ! command -v dbus-run-session >/dev/null 2>&1; then
         echo "dbus-run-session not found (package dbus-daemon)" >&2
@@ -42,14 +45,50 @@ if [ -z "${MIDDLE_DRAG_VERIFY_INNER:-}" ]; then
     VERIFY_TMP="$(mktemp -d /tmp/middle-drag-verify.XXXXXX)"
     SESSION_LOG="$VERIFY_TMP/session.log"
     : > "$SESSION_LOG"
-    exec dbus-run-session -- \
-        env MIDDLE_DRAG_VERIFY_INNER=1 \
-            MIDDLE_DRAG_VERIFY_TMP="$VERIFY_TMP" \
-            MIDDLE_DRAG_SESSION_LOG="$SESSION_LOG" \
-        bash "$0" "$@" 2>>"$SESSION_LOG"
+
+    # A nested shell only scans its own HOME for extensions, so on a clean
+    # checkout (nothing installed yet) there would be nothing to load.  Stage
+    # the working tree into a throwaway HOME in that case, which lets
+    # `verify-extension.sh` and `make verify` run before install.sh has ever
+    # been executed.  When the extension IS installed, verify that copy -
+    # it is the one the real session uses.
+    VERIFY_HOME_ARGS=()
+    if [ ! -d "${HOME}/.local/share/gnome-shell/extensions/${UUID}" ]; then
+        STAGED_HOME="$(mktemp -d /tmp/middle-drag-verify-home.XXXXXX)"
+        mkdir -p "$STAGED_HOME/.local/share/gnome-shell/extensions" \
+                 "$STAGED_HOME/.config"
+        cp -r "$PROJECT_DIR/extension/$UUID" \
+            "$STAGED_HOME/.local/share/gnome-shell/extensions/"
+        if ! glib-compile-schemas --strict \
+            "$STAGED_HOME/.local/share/gnome-shell/extensions/$UUID/schemas"; then
+            echo "glib-compile-schemas failed for the staged copy" >&2
+            rm -rf "$STAGED_HOME"
+            exit 1
+        fi
+        echo "note: ${UUID} is not installed under ${HOME};"
+        echo "      verifying a staged copy of the working tree instead"
+        VERIFY_HOME_ARGS=(
+            HOME="$STAGED_HOME"
+            XDG_DATA_HOME="$STAGED_HOME/.local/share"
+            XDG_CACHE_HOME="$STAGED_HOME/.cache"
+            XDG_CONFIG_HOME="$STAGED_HOME/.config"
+            MIDDLE_DRAG_VERIFY_STAGED_HOME="$STAGED_HOME"
+        )
+    fi
+
+    # The environment is applied to dbus-run-session itself, not to the inner
+    # shell: activated services inherit the *bus daemon's* environment, and
+    # gsettings issues its write through that dconf service.  Seeding
+    # enabled-extensions from out here would land in the real
+    # ~/.config/dconf/user instead of the staged copy, so the seeding happens
+    # inside, where the private bus owns a dconf service with staged HOME.
+    exec env MIDDLE_DRAG_VERIFY_INNER=1 \
+             MIDDLE_DRAG_VERIFY_TMP="$VERIFY_TMP" \
+             MIDDLE_DRAG_SESSION_LOG="$SESSION_LOG" \
+             ${VERIFY_HOME_ARGS[@]+"${VERIFY_HOME_ARGS[@]}"} \
+        dbus-run-session -- bash "$0" "$@" 2>>"$SESSION_LOG"
 fi
 
-UUID="middle-drag-gestures@swad"
 DEST="org.gnome.Shell.Extensions.MiddleDrag"
 OBJPATH="/org/gnome/Shell/Extensions/MiddleDrag"
 WAYLAND_NAME="middle-drag-verify"
@@ -68,6 +107,10 @@ cleanup() {
     if [ -n "$SHELL_PID" ] && kill -0 "$SHELL_PID" 2>/dev/null; then
         kill "$SHELL_PID" 2>/dev/null
         wait "$SHELL_PID" 2>/dev/null
+    fi
+    # The staged copy (clean-checkout mode) lives only for this run.
+    if [ -n "${MIDDLE_DRAG_VERIFY_STAGED_HOME:-}" ]; then
+        rm -rf "$MIDDLE_DRAG_VERIFY_STAGED_HOME" 2>/dev/null
     fi
 }
 
@@ -107,6 +150,18 @@ wait_for_log() {
 if [ ! -d "${HOME}/.local/share/gnome-shell/extensions/${UUID}" ]; then
     say "extension ${UUID} is not installed; run scripts/install.sh first"
     exit 1
+fi
+
+if [ -n "${MIDDLE_DRAG_VERIFY_STAGED_HOME:-}" ]; then
+    # A staged HOME starts with empty enabled/disabled-extensions, and a shell
+    # only enables what that list names - enable() is also where the D-Bus
+    # name the checks below wait for is exported.  Running inside the private
+    # session, this write goes to the staged database, not to the real one.
+    if ! gsettings set org.gnome.shell enabled-extensions "['${UUID}']" ||
+       ! gsettings set org.gnome.shell disabled-extensions "[]"; then
+        say "could not enable ${UUID} in the staged HOME"
+        exit 1
+    fi
 fi
 
 say "starting a headless GNOME Shell (logs: ${SHELL_LOG})"

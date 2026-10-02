@@ -230,9 +230,16 @@ def check(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def skip(message: str, skips: list[str], reason: str) -> None:
+    """An assertion that does not apply in this session's current state."""
+    print(f"  SKIP - {message} ({reason})")
+    skips.append(message)
+
+
 def main() -> int:
     global DAEMON_PROC
     failures: list[str] = []
+    skips: list[str] = []
 
     fake = UInput(FAKE_CAPS, name=FAKE_NAME, version=1)
     time.sleep(0.6)
@@ -316,24 +323,33 @@ def main() -> int:
             "the overshoot did not fire a second LEFT gesture",
             failures,
         )
-        check(
-            daemon.find("NextWorkspace()"),
-            "LEFT gesture dispatched NextWorkspace()",
-            failures,
-        )
-        check(
-            daemon.find("PreviousWorkspace()"),
-            "RIGHT gesture dispatched PreviousWorkspace()",
-            failures,
-        )
-        # The overview methods must be *targeted*; whether they succeed
-        # depends on the running GNOME Shell having the new extension code
-        # (scripts/verify-extension.sh covers that separately).
-        check(
-            daemon.find("ShowOverview") and daemon.find("HideOverview"),
-            "UP/DOWN gestures targeted HideOverview()/ShowOverview()",
-            failures,
-        )
+        # The three dispatch assertions need the extension to be installed,
+        # enabled and loaded in *this* GNOME session - it owns
+        # org.gnome.Shell.Extensions.MiddleDrag, and without that name the
+        # daemon logs a warning and deliberately ignores the gesture.  On a
+        # machine where the product has been uninstalled (the state
+        # verify-clean.sh is meant to produce) there is nothing to assert
+        # against, so they are skipped rather than reported as failures.
+        extension_live = not daemon.find("extension is not owning")
+        dispatch = [
+            ("LEFT gesture dispatched NextWorkspace()", lambda: daemon.find("NextWorkspace()")),
+            ("RIGHT gesture dispatched PreviousWorkspace()", lambda: daemon.find("PreviousWorkspace()")),
+            (
+                "UP/DOWN gestures targeted HideOverview()/ShowOverview()",
+                lambda: bool(daemon.find("ShowOverview")) and bool(daemon.find("HideOverview")),
+            ),
+        ]
+        if extension_live:
+            for message, predicate in dispatch:
+                check(predicate(), message, failures)
+        else:
+            reason = (
+                "extension not installed/enabled in this session - "
+                "run scripts/install.sh, log in again, then re-run"
+            )
+            for message, _ in dispatch:
+                skip(message, skips, reason)
+
         check(
             not daemon.find("unknown action"),
             "no unknown action warnings",
@@ -396,6 +412,12 @@ def main() -> int:
         "physical device grab was released on shutdown",
         failures,
     )
+
+    if skips:
+        print(
+            f"\n{len(skips)} assertion(s) skipped - the extension is not "
+            "active in this session"
+        )
 
     if failures:
         print("\n--- daemon log ---")

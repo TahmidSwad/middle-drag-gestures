@@ -46,9 +46,11 @@ middle-drag-gestures/
 ├── daemon/                                Python daemon + systemd user unit
 ├── udev/                                  udev rule for /dev/uinput
 ├── scripts/                               install / uninstall / enable / disable
+│                                          / verify-clean / verify-extension
 ├── docs/                                  architecture, installation, troubleshooting
-├── packaging/fedora/                      RPM spec
-├── tests/                                 unit tests
+├── packaging/fedora/                      RPM spec (ships the whole product)
+├── tests/                                 unit, integration and install-matrix tests
+├── CHANGELOG.md
 └── plan.md                                original design document
 ```
 
@@ -58,11 +60,19 @@ middle-drag-gestures/
 ./scripts/install.sh
 ```
 
-Then log out and back in (Wayland reloads extensions only at login) and check:
+Then log out and back in (once — Wayland reloads extensions only at login) and
+check:
 
 ```bash
 gnome-extensions info middle-drag-gestures@swad
 systemctl --user status middle-drag-daemon.service
+```
+
+Remove it again, with proof that nothing is left:
+
+```bash
+./scripts/uninstall.sh --purge      # files, settings, install state
+./scripts/verify-clean.sh --purge   # exit 0 only if the machine is clean
 ```
 
 See [docs/installation.md](docs/installation.md) for manual installation and
@@ -81,6 +91,9 @@ See [docs/installation.md](docs/installation.md) for manual installation and
 # tests
 python3 -m unittest discover -s tests -v   # unit tests
 python3 tests/integration_test.py          # end-to-end test with a synthetic mouse
+./tests/install_matrix.sh                  # install → break → uninstall → purge,
+                                           # in a throwaway HOME (--real to also
+                                           # round-trip your actual home directory)
 
 # extension
 ./scripts/verify-extension.sh              # load it in a throwaway GNOME Shell
@@ -88,19 +101,24 @@ python3 tests/integration_test.py          # end-to-end test with a synthetic mo
 
 # deployment
 ./scripts/install.sh | uninstall.sh | enable.sh | disable.sh
+./scripts/verify-clean.sh                  # exit 0 only if nothing is left
 ```
 
 The same targets exist in the `Makefile` if you have `make`:
 
 ```bash
-make test | verify | zip | install | uninstall | clean
+make test | verify | matrix | release | zip | install | uninstall | clean
 ```
+
+`make release` is the gate: unit + integration + extension + install matrix.
 
 `verify-extension.sh` exists because GNOME Shell caches extension code for the
 lifetime of the session: editing `extension.js` does nothing until you log
 out. The script starts a second, headless GNOME Shell on a private session
 bus, asserts the full D-Bus contract and opens the preferences window, then
-shuts it down - your desktop is untouched.
+shuts it down - your desktop is untouched. It runs before anything is
+installed too: when the extension is not in `$HOME` it stages a copy of the
+working tree in a throwaway HOME (your real dconf is never written).
 
 ## Requirements
 

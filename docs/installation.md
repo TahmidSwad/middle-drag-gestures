@@ -81,18 +81,21 @@ ls -l /dev/uinput
 ./scripts/install.sh
 ```
 
-It checks every dependency first and tells you exactly what is missing. It is
-idempotent - re-run it after every code change to redeploy.
+It checks **every** dependency first and refuses before writing a single file:
+if something cannot work (a missing package, or root needed where `sudo` cannot
+ask for a password), it says exactly what to do and exits non-zero with your
+home directory untouched.
 
 What it does:
 
 ```text
 ./scripts/install.sh
              │
-             ├── check GNOME / Python / evdev / dbus / gi / gdbus
-             ├── check /dev/uinput (loads the module if needed)
-             ├── add you to the 'input' group (asks for logout if it did)
-             ├── install udev rule               (sudo)
+             ├── preflight: GNOME / Python / evdev / dbus / gi / gdbus,
+             │   /dev/uinput, udev rule, 'input' group   ← nothing is written
+             │   until all of these pass
+             ├── install udev rule            (sudo, only if not present)
+             ├── add you to the 'input' group (sudo, only if not present)
              ├── install daemon        → ~/.local/bin/middle-drag-daemon.py
              ├── install systemd unit  → ~/.config/systemd/user/
              ├── install extension     → ~/.local/share/gnome-shell/extensions/
@@ -101,9 +104,29 @@ What it does:
              └── enable the extension
 ```
 
-If `sudo` is not available (for example a non-interactive shell) the udev
-step is skipped with explicit instructions instead of blocking on a password
-prompt.
+Every step records what it created, so a failure further down rolls those
+files back and exits non-zero - a failed install never leaves half an
+installation behind (exercised by `tests/install_matrix.sh`).
+
+**One logout, not two.** `input` group membership only applies to new
+sessions, so when the script has to add you to the group it prints
+
+```text
+ACTION REQUIRED: log out and log back in (once).
+```
+
+and leaves the daemon start to that login. Everything else (extension
+enabled, unit enabled) is already in place; there is no second pass.
+
+Root is needed only for the udev rule and the group. The script asks once,
+non-interactively, and refuses up front if it cannot get it. Other flags:
+
+| flag | purpose |
+| ---- | ------- |
+| `--user-only` | skip the root steps (udev rule, `input` group) - the daemon then cannot open the mouse, see [troubleshooting](troubleshooting.md) |
+| `--no-start` | install and enable everything but do not start the daemon |
+| `--no-systemd` | do not touch systemd at all (used by `tests/install_matrix.sh`) |
+| `--help` | full usage |
 
 ### Important: GNOME Shell reloads extension code only at login
 
@@ -126,7 +149,34 @@ To test extension changes *without* logging out, use:
 ./scripts/verify-extension.sh
 ```
 
-which loads the extension in a throwaway headless GNOME Shell.
+which loads the extension in a throwaway headless GNOME Shell. It works on a
+clean checkout too: if the extension is not installed it stages a private copy
+of the working tree (and never touches your real dconf).
+
+### Alternative: install the Fedora RPM
+
+`packaging/fedora/middle-drag-gestures.spec` packages the whole product -
+extension, prefs, GSettings schema, daemon, udev rule and user unit - into
+`/usr`:
+
+```bash
+spectool -g packaging/fedora/middle-drag-gestures.spec
+rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
+sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
+```
+
+A package cannot perform per-user steps, so afterwards:
+
+```bash
+sudo usermod -aG input "$USER"              # then log out and log back in
+gnome-extensions enable middle-drag-gestures@swad
+systemctl --user enable --now middle-drag-daemon.service
+```
+
+> **Status:** the spec's `%install` section has been executed against a build
+> root and produces exactly what `%files` lists, but no RPM has been built
+> yet - `rpm-build` and `systemd-rpm-macros` are not installed on this
+> machine.
 
 ---
 
@@ -177,9 +227,12 @@ systemctl --user enable --now middle-drag-daemon.service
 ## 5. Enabling, disabling, removing
 
 ```bash
-./scripts/enable.sh      # extension on + daemon started
-./scripts/disable.sh     # both off, nothing removed
-./scripts/uninstall.sh   # remove everything
+./scripts/enable.sh            # extension on + daemon started
+./scripts/disable.sh           # both off, nothing removed
+./scripts/uninstall.sh         # remove every file
+./scripts/uninstall.sh --purge # ...plus settings, state and group note
+./scripts/verify-clean.sh      # exit 0 only if nothing is left
+./scripts/verify-clean.sh --purge
 ```
 
 Equivalent by hand:
@@ -192,8 +245,33 @@ systemctl --user disable --now middle-drag-daemon.service
 gnome-extensions disable middle-drag-gestures@swad
 ```
 
-Uninstalling deliberately **keeps** your `input` group membership (other
-software may need it) and your dconf settings.
+Uninstalling deliberately **keeps** two things, and says so:
+
+* your `input` group membership - other software may need it
+* your dconf settings under `org.gnome.shell.extensions.middle-drag`
+
+`--purge` removes both, plus the install state file, and drops the `input`
+membership only when the state file says *this project* added it - a
+membership you already had is never touched. The `input` group is a
+deliberate choice; see
+[troubleshooting.md](troubleshooting.md#gestures-do-nothing-but-the-log-shows-the-gesture)
+for why the alternative (udev `uaccess` ACLs) is not used.
+
+### Proving it is gone
+
+`verify-clean.sh` is the counterpart of `install.sh`: it asserts every path
+the installer writes, the systemd enabled symlink, the running daemon, the
+gsettings entries and (with `--purge`) dconf and the install state. It prints
+one `ok:` line per check, `FAIL:` naming anything left behind, and exits
+non-zero if the machine is not clean:
+
+```bash
+./scripts/verify-clean.sh
+#   CLEAN: no trace of Middle-Drag Gestures remains.
+```
+
+After uninstalling, **log out and log back in** so GNOME Shell drops the
+extension completely - it only rescans extension directories at login.
 
 ---
 
