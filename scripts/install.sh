@@ -30,6 +30,7 @@
 #                so tests do not grab the physical mouse.
 #
 set -euo pipefail
+set -E   # make the ERR trap fire inside functions too
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
@@ -57,16 +58,148 @@ fail_preflight() {
     exit 1
 }
 
-# Called after installation has started: point at the rollback path.
+# Called after installation has started: roll back, then point at the
+# cleanup path.
 die() {
     printf '\nError: %s\n' "$*" >&2
-    printf 'Run ./scripts/uninstall.sh to remove any partial install.\n' >&2
+    rollback
+    printf 'Run ./scripts/uninstall.sh for a complete cleanup.\n' >&2
     exit 1
 }
 
 usage() {
-    sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
+
+# ---------------------------------------------------------------------------
+# Transaction support
+#
+# Everything this run creates is recorded, so a failure part-way through can
+# put the system back the way it was.  Paths that already existed (an
+# upgrade) are never deleted - keeping the new files is better than ending
+# up with nothing - and that is stated explicitly in the failure message.
+# ---------------------------------------------------------------------------
+CREATED=()
+GROUP_ADDED=0
+UDEV_CREATED=0
+ORIG_UINPUT_PERMS=""
+ROLLING_BACK=0
+
+# note_created PATH - record that PATH does not exist yet.  Call it BEFORE
+# creating the path.
+note_created() {
+    if [ ! -e "$1" ]; then
+        CREATED+=("$1")
+    fi
+}
+
+rollback() {
+    local path
+    if [ "$ROLLING_BACK" = 1 ]; then
+        return 0
+    fi
+    ROLLING_BACK=1
+    trap - ERR
+
+    if [ "${#CREATED[@]}" -eq 0 ] && [ "$GROUP_ADDED" = 0 ] &&
+       [ "$UDEV_CREATED" = 0 ]; then
+        printf '\nNothing had been changed yet - nothing to undo.\n' >&2
+        return 0
+    fi
+
+    printf '\nRolling back the changes this run made:\n' >&2
+    for path in ${CREATED[@]+"${CREATED[@]}"}; do
+        if [ -e "$path" ]; then
+            rm -rf "$path"
+            printf '  removed %s\n' "$path" >&2
+        fi
+    done
+
+    # If our schema was removed from the shared directory, refresh its cache
+    # so no stale entry for our extension survives the rollback.
+    if [ -d "$SCHEMA_DST_DIR" ] &&
+       [ ! -f "$SCHEMA_DST_DIR/${SCHEMA_ID}.gschema.xml" ]; then
+        glib-compile-schemas "$SCHEMA_DST_DIR" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$GROUP_ADDED" = 1 ]; then
+        if gpasswd -d "$CURRENT_USER" input 2>/dev/null ||
+           sudo -n gpasswd -d "$CURRENT_USER" input 2>/dev/null; then
+            printf "  removed '%s' from the input group\n" "$CURRENT_USER" >&2
+        else
+            printf "  warning: could not remove '%s' from the input group\n" \
+                "$CURRENT_USER" >&2
+        fi
+        GROUP_ADDED=0
+    fi
+
+    if [ "$UDEV_CREATED" = 1 ]; then
+        rm -f "$UDEV_DST"
+        udevadm control --reload-rules 2>/dev/null || true
+        printf '  removed %s\n' "$UDEV_DST" >&2
+        if [ -n "$ORIG_UINPUT_PERMS" ] && [ -e /dev/uinput ]; then
+            # shellcheck disable=SC2086
+            chmod $ORIG_UINPUT_PERMS /dev/uinput 2>/dev/null || true
+            printf '  restored /dev/uinput to %s\n' "$ORIG_UINPUT_PERMS" >&2
+        fi
+        UDEV_CREATED=0
+    fi
+
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/middle-drag-gestures" \
+        2>/dev/null || true
+    printf 'Pre-existing files were left as they are.\n' >&2
+    return 0
+}
+
+on_unexpected_error() {
+    local rc=$?
+    printf '\nError: unexpected failure at line %s (exit %s).\n' \
+        "${BASH_LINENO[0]:-?}" "$rc" >&2
+    rollback
+    printf 'Run ./scripts/uninstall.sh for a complete cleanup.\n' >&2
+    exit "$rc"
+}
+trap on_unexpected_error ERR
+
+# ---------------------------------------------------------------------------
+# Install state
+#
+# Written only after a fully successful install.  It records what this
+# product changed outside the user's own files, so `uninstall.sh --purge`
+# can undo exactly that - and nothing that was already there (a pre-existing
+# 'input' group membership is never removed).
+# ---------------------------------------------------------------------------
+state_get() {
+    [ -f "$MDG_STATE_FILE" ] || return 1
+    sed -n "s/^$1=//p" "$MDG_STATE_FILE" | head -n 1
+}
+
+write_state() {
+    local prev_group prev_perms version new_group
+    prev_group="$(state_get group_added || true)"
+    prev_perms="$(state_get uinput_orig_perms || true)"
+    version="$(cat "$PROJECT_DIR/VERSION" 2>/dev/null || echo unknown)"
+
+    # Keep the oldest known pristine permissions: if our rule was already
+    # applied when this run started, the value just measured is ours.
+    ORIG_UINPUT_PERMS="${prev_perms:-$ORIG_UINPUT_PERMS}"
+
+    new_group=0
+    if [ "$GROUP_ADDED" = 1 ] || [ "${prev_group:-0}" = 1 ]; then
+        new_group=1
+    fi
+
+    mkdir -p "$MDG_STATE_DIR"
+    cat > "$MDG_STATE_FILE" <<EOF
+version=$version
+installed_at=$(date -Iseconds 2>/dev/null || date)
+group_added=$new_group
+uinput_orig_perms=$ORIG_UINPUT_PERMS
+EOF
+    chmod 0644 "$MDG_STATE_FILE" 2>/dev/null || true
+}
+
 
 # Root helper: only udev rules, usermod and modprobe need privileges.
 as_root() {
@@ -132,6 +265,13 @@ for src in "$DAEMON_SRC" "$UNIT_SRC" "$SCHEMA_SRC" \
 done
 info "source files present"
 
+# Remember how /dev/uinput looks right now: removing the udev rule alone
+# leaves the old mode on the node (it looks configured but breaks on the
+# next reboot), so the uninstaller puts this value back.
+if [ -e /dev/uinput ]; then
+    ORIG_UINPUT_PERMS="$(stat -c '%a %u %g' /dev/uinput 2>/dev/null || true)"
+fi
+
 # What will this run need root for?  Collected first so the installer can
 # either authenticate once up front or refuse before changing anything.
 NEED_ROOT=()
@@ -192,6 +332,8 @@ if [ "$USER_ONLY" = 1 ]; then
 elif [ -f "$UDEV_DST" ] && cmp -s "$UDEV_SRC" "$UDEV_DST"; then
     info "already up to date ($UDEV_DST)"
 else
+    [ -f "$UDEV_DST" ] || UDEV_CREATED=1
+    note_created "$UDEV_DST"
     if [ "$(id -u)" = 0 ]; then
         install -m 0644 "$UDEV_SRC" "$UDEV_DST"
     else
@@ -242,9 +384,11 @@ fi
 # ---------------------------------------------------------------------------
 step "Installing the input daemon"
 
+note_created "$DAEMON_DST"
 install -D -m 0755 "$DAEMON_SRC" "$DAEMON_DST"
 info "$DAEMON_DST"
 
+note_created "$UNIT_DST"
 install -D -m 0644 "$UNIT_SRC" "$UNIT_DST"
 info "$UNIT_DST"
 
@@ -262,39 +406,70 @@ if ! cmp -s "$EXT_SRC/extension.js" "$EXT_DST/extension.js" 2>/dev/null ||
     EXT_CHANGED=1
 fi
 
-install -d -m 0755 "$EXT_DST" "$EXT_DST/schemas"
-install -m 0644 "$EXT_SRC/extension.js"  "$EXT_DST/extension.js"
-install -m 0644 "$EXT_SRC/prefs.js"      "$EXT_DST/prefs.js"
-install -m 0644 "$EXT_SRC/metadata.json" "$EXT_DST/metadata.json"
-install -m 0644 "$EXT_SRC/stylesheet.css" "$EXT_DST/stylesheet.css"
-install -m 0644 "$EXT_SRC/LICENSE"       "$EXT_DST/LICENSE" 2>/dev/null || true
+# Build the complete extension in a staging directory and swap it in only
+# once every file is present and the schema compiles: a failure can then
+# never leave a half-written extension behind, and an upgrade keeps the
+# previous working copy until the new one is proven good.
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/middle-drag-gestures"
+mkdir -p "$CACHE_DIR"
+EXT_STAGE="$(mktemp -d "$CACHE_DIR/ext.XXXXXX")"
+CREATED+=("$EXT_STAGE")
+
+install -m 0644 "$EXT_SRC/extension.js"   "$EXT_STAGE/extension.js"
+install -m 0644 "$EXT_SRC/prefs.js"       "$EXT_STAGE/prefs.js"
+install -m 0644 "$EXT_SRC/metadata.json"  "$EXT_STAGE/metadata.json"
+install -m 0644 "$EXT_SRC/stylesheet.css" "$EXT_STAGE/stylesheet.css"
+install -m 0644 "$EXT_SRC/LICENSE"        "$EXT_STAGE/LICENSE" 2>/dev/null || true
 if [ -d "$EXT_SRC/icons" ]; then
-    find "$EXT_SRC/icons" -mindepth 1 -maxdepth 1 -exec \
-        cp -r {} "$EXT_DST/icons/" \; 2>/dev/null || true
+    cp -r "$EXT_SRC/icons" "$EXT_STAGE/icons" 2>/dev/null || true
 fi
-info "$EXT_DST"
 
 # The extension's own Gio.Settings looks for schemas/gschemas.compiled next
 # to metadata.json, and enable() reads it - without this the extension
 # throws as soon as it is enabled.
-install -m 0644 "$SCHEMA_SRC" "$EXT_DST/schemas/"
-glib-compile-schemas --strict "$EXT_DST/schemas" ||
-    die "failed to compile $EXT_DST/schemas"
-[ -f "$EXT_DST/schemas/gschemas.compiled" ] ||
-    die "failed to compile $EXT_DST/schemas/gschemas.compiled"
+mkdir -p "$EXT_STAGE/schemas"
+install -m 0644 "$SCHEMA_SRC" "$EXT_STAGE/schemas/"
+glib-compile-schemas --strict "$EXT_STAGE/schemas" ||
+    die "the extension's GSettings schema does not compile"
+[ -f "$EXT_STAGE/schemas/gschemas.compiled" ] ||
+    die "glib-compile-schemas produced no output for the extension schema"
 info "extension schema compiled"
 
+install -d -m 0755 "$(dirname "$EXT_DST")"
+if [ -d "$EXT_DST" ]; then
+    # Two renames, so the old copy survives if either one fails.
+    EXT_BACKUP="$CACHE_DIR/ext-previous.$$"
+    rm -rf "$EXT_BACKUP"
+    mv -T "$EXT_DST" "$EXT_BACKUP"
+    if mv -T "$EXT_STAGE" "$EXT_DST"; then
+        rm -rf "$EXT_BACKUP"
+    else
+        mv -T "$EXT_BACKUP" "$EXT_DST" 2>/dev/null || true
+        die "could not move the staged extension to $EXT_DST"
+    fi
+else
+    note_created "$EXT_DST"
+    mv -T "$EXT_STAGE" "$EXT_DST" ||
+        die "could not move the staged extension to $EXT_DST"
+fi
+info "$EXT_DST"
+
+# The shared user schema directory may contain other extensions' schemas, so
+# a strict failure there is not fatal by itself - what matters is whether the
+# daemon's settings resolve afterwards.
+note_created "$SCHEMA_DST_DIR/${SCHEMA_ID}.gschema.xml"
 install -d -m 0755 "$SCHEMA_DST_DIR"
 install -m 0644 "$SCHEMA_SRC" "$SCHEMA_DST_DIR/"
-glib-compile-schemas --strict "$SCHEMA_DST_DIR" ||
-    die "failed to compile $SCHEMA_DST_DIR"
-[ -f "$SCHEMA_DST_DIR/gschemas.compiled" ] ||
-    die "failed to compile $SCHEMA_DST_DIR/gschemas.compiled"
-info "user schema installed ($SCHEMA_DST_DIR)"
+if ! SCHEMA_OUTPUT="$(glib-compile-schemas "$SCHEMA_DST_DIR" 2>&1)"; then
+    info "warning: glib-compile-schemas reported problems:"
+    printf '%s\n' "$SCHEMA_OUTPUT" | sed 's/^/      /' >&2
+fi
 
-gsettings get "$SCHEMA_ID" threshold >/dev/null 2>&1 ||
-    die "schema $SCHEMA_ID is not usable by gsettings"
-info "gsettings can read $SCHEMA_ID"
+if ! gsettings get "$SCHEMA_ID" threshold >/dev/null 2>&1; then
+    die "schema $SCHEMA_ID is not usable by gsettings - check for a broken
+      *.gschema.xml in $SCHEMA_DST_DIR (output above)"
+fi
+info "user schema installed and readable ($SCHEMA_DST_DIR)"
 
 # ---------------------------------------------------------------------------
 # 5. Enable everything
@@ -332,6 +507,10 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Summary
 # ---------------------------------------------------------------------------
+# Everything succeeded: record what was changed outside the user's files so
+# `uninstall.sh --purge` can undo exactly that.
+write_state
+
 sleep 1
 printf '\n%s\n' "----------------------------------------------------------------"
 
