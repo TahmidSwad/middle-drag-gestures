@@ -50,6 +50,14 @@
 #   sudo usermod -aG input "$USER"                  # applies at next login
 #   gnome-extensions enable middle-drag-gestures@swad
 #   systemctl --user enable --now middle-drag-daemon.service
+#
+# Removal has one manual half too: run `gnome-extensions disable
+# middle-drag-gestures@swad` first, because %preun cannot write the
+# user's dconf - otherwise a dangling uuid is left in enabled-extensions
+# (docs/installation.md shows how to clean it up after the fact).
+# Verified on removal: files gone, schema cache rebuilt, daemon stopped
+# with SIGTERM and the grab released, enable symlink cleared; /dev/uinput
+# keeps 0660 root:input until reboot.
 
 %global uuid middle-drag-gestures@swad
 %global schema_id org.gnome.shell.extensions.middle-drag

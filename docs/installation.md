@@ -272,6 +272,44 @@ deliberate choice; see
 [troubleshooting.md](troubleshooting.md#gestures-do-nothing-but-the-log-shows-the-gesture)
 for why the alternative (udev `uaccess` ACLs) is not used.
 
+### Removing the RPM
+
+```bash
+gnome-extensions disable middle-drag-gestures@swad        # BEFORE removal
+systemctl --user disable --now middle-drag-daemon.service
+sudo dnf remove middle-drag-gestures
+```
+
+`dnf remove` takes care of the files, rebuilds the GSettings cache (a later
+`gsettings get` correctly reports *No such schema*), stops the daemon
+gracefully — the journal shows `SIGTERM` → `virtual mouse removed` →
+`physical mouse released` — and clears the enable symlink, even though the
+scriptlet runs as root.
+
+Two things it cannot reach, because both live in your session:
+
+* **The `enabled-extensions` entry.** A package cannot write your dconf, so
+  the uuid stays behind and GNOME Shell keeps reporting the extension as
+  `Enabled: Yes` against a path that no longer exists, until the next login.
+  Disable *before* removing. If you already removed it, filter the uuid out
+  yourself (do **not** reset the key — that would drop your other
+  extensions):
+
+  ```bash
+  gsettings set org.gnome.shell enabled-extensions \
+    "$(gsettings get org.gnome.shell enabled-extensions \
+        | sed -e "s/'middle-drag-gestures@swad', //g" \
+              -e "s/, 'middle-drag-gestures@swad'//g" \
+              -e "s/'middle-drag-gestures@swad'//g")"
+  ```
+
+* **`/dev/uinput` keeps `0660 root:input`** until the next reboot: udev
+  reloads the rule set but does not recompute permissions on a node it no
+  longer matches.
+
+`./scripts/verify-clean.sh` fails on the first of these, so run it after
+removing.
+
 ### Proving it is gone
 
 `verify-clean.sh` is the counterpart of `install.sh`: it asserts every path
