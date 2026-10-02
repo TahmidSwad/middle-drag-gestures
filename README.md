@@ -75,6 +75,21 @@ See [docs/installation.md](docs/installation.md) for manual installation and
 * [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and fixes
 * [plan.md](plan.md) — the original design document
 
+## Development
+
+```bash
+python3 -m unittest discover -s tests -v   # unit tests
+python3 tests/integration_test.py          # end-to-end test with a synthetic mouse
+./scripts/verify-extension.sh              # load the extension in a throwaway Shell
+./scripts/install.sh                       # redeploy everything
+```
+
+`verify-extension.sh` exists because GNOME Shell caches extension code for the
+lifetime of the session: editing `extension.js` does nothing until you log
+out. The script starts a second, headless GNOME Shell on a private session
+bus, asserts the full D-Bus contract and opens the preferences window, then
+shuts it down - your desktop is untouched.
+
 ## Requirements
 
 * Fedora 44 (or similar) with GNOME Shell 50 on Wayland

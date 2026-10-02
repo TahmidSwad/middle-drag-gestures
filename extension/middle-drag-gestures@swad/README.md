@@ -1,22 +1,32 @@
-# Middle-Drag Gestures
+# Middle-Drag Gestures (GNOME Shell extension)
 
-Personal GNOME 50 extension. Middle mouse button + drag (>= 100 px):
+GNOME half of the [Middle-Drag Gestures](../../README.md) project. It exports
+the D-Bus interface that the companion input daemon calls:
 
-| Drag  | Action                  |
-|-------|-------------------------|
-| Left  | Previous workspace      |
-| Right | Next workspace          |
-| Up    | Open Overview           |
-| Down  | Close Overview          |
+```text
+org.gnome.Shell.Extensions.MiddleDrag
+  /org/gnome/Shell/Extensions/MiddleDrag
 
-The middle-button press/release is consumed, so applications no longer see
-a normal middle click (paste, close tab, autoscroll). Tune `THRESHOLD` in
-`extension.js`.
+  PreviousWorkspace()
+  NextWorkspace()
+  ShowOverview()
+  HideOverview()
+  GetStatus() -> s
+```
 
-## Install
+It owns nothing Linux-specific: no `evdev`, no device paths, no gesture
+thresholds. Everything else lives in `daemon/middle-drag-daemon.py`.
 
-    cp -r middle-drag-gestures@swad ~/.local/share/gnome-shell/extensions/
-    # log out and back in (Wayland), then:
-    gnome-extensions enable middle-drag-gestures@swad
+Configuration lives in the GSettings schema
+`org.gnome.shell.extensions.middle-drag` (see `schemas/`), edited through
+`prefs.js`.
 
-Debug: `journalctl -f -o cat /usr/bin/gnome-shell`
+## Install / develop
+
+```bash
+../scripts/install.sh                # from the repository root
+../scripts/verify-extension.sh       # test changes without logging out
+```
+
+GNOME Shell caches extension code per session, so log out and back in after
+changing `extension.js` or `prefs.js`.
