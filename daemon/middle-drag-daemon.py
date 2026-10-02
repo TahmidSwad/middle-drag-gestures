@@ -20,6 +20,7 @@ Run as the logged-in user (never as root)::
 from __future__ import annotations
 
 import argparse
+import errno
 import logging
 import os
 import select
@@ -536,13 +537,18 @@ class Daemon:
                 continue
             self._logged_waiting_device = False
 
+            started = time.monotonic()
             try:
                 self._run_session(path)
             except Exception:
                 # One bad event or device must not take the whole service
                 # down: log it, back off and start over.
                 LOG.exception("unexpected error while driving %s", path)
-                self.stopping.wait(2.0)
+
+            # Rate-limit: a session that ended instantly (missing device,
+            # EBUSY, permission error) must not turn into a hot loop.
+            if time.monotonic() - started < 1.0:
+                self.stopping.wait(1.0)
 
         self._cleanup()
         return 0
@@ -561,15 +567,35 @@ class Daemon:
     def _run_session(self, path: str) -> None:
         try:
             device = InputDevice(path)
-        except (OSError, PermissionError) as exc:
-            LOG.error("cannot open %s: %s", path, exc)
+        except PermissionError as exc:
+            LOG.error(
+                "permission denied on %s (is your user in the 'input' "
+                "group?): %s",
+                path,
+                exc,
+            )
+            self.stopping.wait(5.0)
+            return
+        except OSError as exc:
+            LOG.warning("cannot open %s: %s", path, exc)
             self.stopping.wait(2.0)
             return
 
         grabbed = False
         try:
             LOG.info("using %s (%s)", path, device.name)
-            device.grab()
+            try:
+                device.grab()
+            except OSError as exc:
+                if exc.errno == errno.EBUSY:
+                    LOG.warning(
+                        "%s is already grabbed by another process (a second "
+                        "daemon?); retrying in 2s",
+                        path,
+                    )
+                    self.stopping.wait(2.0)
+                    return
+                raise
             grabbed = True
             LOG.info(
                 "physical mouse grabbed; middle button reserved "
@@ -582,8 +608,6 @@ class Daemon:
 
         except DeviceGone:
             LOG.info("device %s disconnected; releasing", path)
-        except OSError as exc:
-            LOG.info("device %s went away: %s", path, exc)
         except PermissionError as exc:
             LOG.error(
                 "permission denied on %s (is your user in the 'input' "
@@ -592,6 +616,12 @@ class Daemon:
                 exc,
             )
             self.stopping.wait(5.0)
+        except OSError as exc:
+            if exc.errno in (errno.ENODEV, errno.ENOENT):
+                LOG.info("device %s disconnected: %s", path, exc)
+            else:
+                LOG.warning("device %s error: %s", path, exc)
+                self.stopping.wait(1.0)
         finally:
             if grabbed:
                 try:

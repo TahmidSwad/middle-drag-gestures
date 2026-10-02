@@ -58,10 +58,19 @@ class TestFailure(Exception):
     pass
 
 
-def find_event_path(name: str, timeout: float = 6.0) -> str:
+def find_event_path(name: str, timeout: float = 6.0, exclude: set | None = None) -> str:
+    """Return the path of a device called *name*.
+
+    With *exclude*, only devices whose path is not in that set are
+    considered - useful when a second daemon (e.g. the installed service)
+    has already created a device with the same name.
+    """
+    exclude = exclude or set()
     deadline = time.time() + timeout
     while time.time() < deadline:
         for path in list_devices():
+            if path in exclude:
+                continue
             try:
                 device = InputDevice(path)
             except OSError:
@@ -73,6 +82,21 @@ def find_event_path(name: str, timeout: float = 6.0) -> str:
                 device.close()
         time.sleep(0.1)
     raise TestFailure(f"device {name!r} did not appear within {timeout}s")
+
+
+def device_paths_named(name: str) -> set:
+    paths = set()
+    for path in list_devices():
+        try:
+            device = InputDevice(path)
+        except OSError:
+            continue
+        try:
+            if device.name == name:
+                paths.add(path)
+        finally:
+            device.close()
+    return paths
 
 
 def wait_for(predicate, timeout: float, what: str):
@@ -215,6 +239,10 @@ def main() -> int:
     fake_path = find_event_path(FAKE_NAME)
     print(f"synthetic mouse: {fake_path}")
 
+    # The installed service may already own a virtual mouse; make sure we
+    # attach to the one this test's daemon creates.
+    preexisting_virtual = device_paths_named(VIRTUAL_NAME)
+
     daemon = DaemonProcess(fake_path)
     DAEMON_PROC = daemon
     collector = None
@@ -226,7 +254,7 @@ def main() -> int:
         )
         print("daemon grabbed the synthetic mouse")
 
-        virtual_path = find_event_path(VIRTUAL_NAME)
+        virtual_path = find_event_path(VIRTUAL_NAME, exclude=preexisting_virtual)
         collector = EventCollector(virtual_path)
         print(f"virtual mouse grabbed by test: {virtual_path}")
 
@@ -296,6 +324,14 @@ def main() -> int:
         check(
             daemon.find("PreviousWorkspace()"),
             "RIGHT gesture dispatched PreviousWorkspace()",
+            failures,
+        )
+        # The overview methods must be *targeted*; whether they succeed
+        # depends on the running GNOME Shell having the new extension code
+        # (scripts/verify-extension.sh covers that separately).
+        check(
+            daemon.find("ShowOverview") and daemon.find("HideOverview"),
+            "UP/DOWN gestures targeted HideOverview()/ShowOverview()",
             failures,
         )
         check(
