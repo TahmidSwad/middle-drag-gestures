@@ -16,11 +16,24 @@ Tested on **Fedora 44, GNOME Shell 50.5, Wayland** with a USB mouse.
 | schema compiler | `glib2` (provides `glib-compile-schemas`) |
 | session bus client | `glib2` (provides `gdbus`) |
 
-Install them all:
+Install them all (Fedora):
 
 ```bash
 sudo dnf install python3-evdev python3-dbus python3-gobject glib2
 ```
+
+Debian / Ubuntu — same components, distribution names:
+
+```bash
+sudo apt install python3-evdev python3-dbus python3-gi libglib2.0-bin
+```
+
+`scripts/install.sh` checks every row of this table before writing anything
+and prints the exact package name for your distribution when one is missing,
+so the table is a checklist rather than a prerequisite. Everything here is
+ordinary systemd/udev/GNOME material: any distribution with systemd, udev,
+logind and GNOME 50 can run the project. Only Fedora 44 (GNOME 50, Wayland)
+has actually been tested.
 
 Kernel side:
 

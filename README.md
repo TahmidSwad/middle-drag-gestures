@@ -79,6 +79,28 @@ gnome-extensions disable middle-drag-gestures@swad   # first: no dangling uuid
 sudo dnf remove middle-drag-gestures
 ```
 
+### Any other GNOME 50 distro
+
+The extension is also listed on
+[extensions.gnome.org](https://extensions.gnome.org/?search=Middle-Drag%20Gestures)
+(search "Middle-Drag Gestures"). Installing it from there only lays down the
+GNOME half — the daemon still needs one root run:
+
+```bash
+curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.0.tar.gz
+tar -xzf /tmp/middle-drag-gestures.tar.gz -C /tmp
+bash /tmp/middle-drag-gestures-0.1.0/scripts/install.sh
+```
+
+`install.sh` verifies every dependency before writing a byte and prints the
+package name for your distribution (`dnf`, `apt`, …), then enables the
+extension, starts the daemon and says whether a relogin is needed. It needs
+systemd + udev + GNOME 50. The extension's preferences page shows these same
+commands whenever the daemon is missing.
+
+**Tested on Fedora 44 (GNOME 50, Wayland) only** — other distributions are
+supported by design, not yet by test.
+
 ### From source
 
 ```bash

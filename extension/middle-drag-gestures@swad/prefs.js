@@ -1,5 +1,7 @@
 import Adw from 'gi://Adw';
+import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
@@ -18,6 +20,27 @@ const ACTIONS = [
 
 const BY_ID_DIR = '/dev/input/by-id';
 
+// The name the daemon (and this extension) put on the session bus; see
+// ACTION_METHODS in daemon/middle-drag-daemon.py.
+const DAEMON_DBUS_NAME = 'org.gnome.Shell.Extensions.MiddleDrag';
+
+// What to run on a machine that has the extension but no daemon - exactly
+// the state an extensions.gnome.org install starts in, because an extension
+// bundle cannot write to /etc/udev/rules.d or manage systemd units.
+// install.sh needs the rest of the checkout beside it, so the release
+// tarball is fetched rather than the lone script, and the commands are shown
+// for reading before they are pasted.  Keep the tag in step with VERSION.
+const INSTALL_COMMAND = [
+    '# 1. dependencies - the installer prints the right names for your distro too:',
+    '#    Fedora:       sudo dnf install python3-evdev python3-dbus python3-gobject',
+    '#    Debian/Ubuntu: sudo apt install python3-evdev python3-dbus python3-gi libglib2.0-bin',
+    '# 2. install (udev rule + systemd unit + extension + schema, then starts the daemon):',
+    'curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.0.tar.gz',
+    'tar -xzf /tmp/middle-drag-gestures.tar.gz -C /tmp',
+    'less /tmp/middle-drag-gestures-0.1.0/scripts/install.sh   # optional: read it first',
+    'bash /tmp/middle-drag-gestures-0.1.0/scripts/install.sh',
+].join('\n');
+
 
 export default class MiddleDragPreferences extends ExtensionPreferences {
 
@@ -29,6 +52,7 @@ export default class MiddleDragPreferences extends ExtensionPreferences {
         const page = new Adw.PreferencesPage();
         window.add(page);
 
+        page.add(this._statusGroup());
         page.add(this._generalGroup(settings));
         page.add(this._horizontalGroup(settings));
         page.add(this._verticalGroup(settings));
@@ -41,6 +65,136 @@ export default class MiddleDragPreferences extends ExtensionPreferences {
     // -----------------------------------------------------------------
     // Groups
     // -----------------------------------------------------------------
+
+    _statusGroup() {
+        const group = new Adw.PreferencesGroup({
+            title: 'Input daemon',
+            description: 'Gestures only fire while the background daemon is ' +
+                'running - it reads the middle button and hands the gesture ' +
+                'to GNOME Shell.',
+        });
+
+        const row = new Adw.ActionRow({title: 'Checking\u2026'});
+        const icon = new Gtk.Image({icon_name: 'content-loading-symbolic'});
+        row.add_suffix(icon);
+        group.add(row);
+
+        const installBox = this._installBox();
+        installBox.visible = false;
+        group.add(installBox);
+
+        const apply = owned => {
+            if (owned) {
+                row.title = 'Running';
+                row.subtitle = `Owns ${DAEMON_DBUS_NAME} on the session bus.`;
+                icon.icon_name = 'emblem-ok-symbolic';
+                installBox.visible = false;
+                return;
+            }
+            row.title = 'Not running';
+            row.subtitle = 'The extension is here, but nothing is reading ' +
+                'the middle button yet - run the commands below once, as ' +
+                'your own user.';
+            icon.icon_name = 'dialog-warning-symbolic';
+            installBox.visible = true;
+        };
+
+        this._queryDaemon(apply);
+
+        // Live update: while this window is open, the row flips as soon as
+        // the installer claims the name (or the daemon stops).
+        Gio.DBus.session.signal_subscribe(
+            'org.freedesktop.DBus',
+            'org.freedesktop.DBus',
+            'NameOwnerChanged',
+            '/org/freedesktop/DBus',
+            'org.freedesktop.DBus',
+            Gio.DBusSignalFlags.NONE,
+            (_connection, _sender, _path, _interface, _signal, params) => {
+                const [name, , owner] = params.deep_unpack();
+                if (name === DAEMON_DBUS_NAME)
+                    apply(owner !== '');
+            });
+
+        return group;
+    }
+
+    _queryDaemon(apply) {
+        Gio.DBus.session.call(
+            'org.freedesktop.DBus',
+            '/org/freedesktop/DBus',
+            'org.freedesktop.DBus',
+            'NameHasOwner',
+            new GLib.VariantType('(s)'),
+            new GLib.Variant('(s)', [DAEMON_DBUS_NAME]),
+            null,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            null,
+            (connection, result) => {
+                let owned = false;
+                try {
+                    owned = connection.call_finish(result).deep_unpack()[0];
+                } catch (e) {
+                    console.error(`[MiddleDrag] daemon lookup failed: ${e}`);
+                }
+                apply(owned);
+            });
+    }
+
+    _installBox() {
+        const box = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 6,
+            margin_start: 12,
+            margin_end: 12,
+            margin_bottom: 12,
+        });
+
+        const note = new Gtk.Label({
+            label: 'One-off, with root: the installer checks every ' +
+                'dependency before writing a single byte, enables the ' +
+                'extension, starts the daemon and says whether a relogin is ' +
+                'needed. Requires systemd + udev + GNOME 50.',
+            wrap: true,
+            xalign: 0,
+        });
+        box.append(note);
+
+        const buffer = new Gtk.TextBuffer();
+        buffer.set_text(INSTALL_COMMAND, -1);
+        const view = new Gtk.TextView({
+            buffer,
+            editable: false,
+            cursor_visible: false,
+            monospace: true,
+            wrap_mode: Gtk.WrapMode.WORD_CHAR,
+        });
+        const scroll = new Gtk.ScrolledWindow({
+            child: view,
+            min_content_height: 132,
+            hexpand: true,
+        });
+        scroll.add_css_class('card');
+        box.append(scroll);
+
+        const copy = new Gtk.Button({label: 'Copy commands'});
+        copy.add_css_class('suggested-action');
+        copy.connect('clicked', () => {
+            const clipboard = Gdk.Display.get_default()?.get_clipboard();
+            if (!clipboard)
+                return;
+            clipboard.set_text(INSTALL_COMMAND);
+            copy.label = 'Copied';
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+                copy.label = 'Copy commands';
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        box.append(copy);
+
+        return box;
+    }
 
     _generalGroup(settings) {
         const group = new Adw.PreferencesGroup({

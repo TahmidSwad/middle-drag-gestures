@@ -4,9 +4,10 @@
 #
 #   dist/middle-drag-gestures@swad.shell-extension.zip
 #
-# The bundle contains only the extension (metadata.json, extension.js,
-# prefs.js, stylesheet.css, the GSettings schema and its compiled form).
-# The daemon, udev rule and systemd unit are distributed separately - an
+# The bundle contains the extension (metadata.json, extension.js, prefs.js,
+# stylesheet.css, the GSettings schema and its compiled form) plus the LICENSE,
+# which extensions.gnome.org reviewers expect to find in it.  The daemon, udev
+# rule and systemd unit are distributed separately - an
 # extension bundle cannot write to /etc/udev/rules.d or manage systemd
 # units.  See docs/installation.md and packaging/fedora/.
 #
@@ -42,6 +43,11 @@ ZIP="$OUT_DIR/$UUID.shell-extension.zip"
 #    location ourselves.
 (cd "$SRC" && zip -q "$ZIP" schemas/gschemas.compiled)
 
+# 3b. LICENSE lives at the repository root rather than inside the extension
+#     directory, and -j drops it at the top level of the bundle.  The RPM
+#     installs the same file beside the extension.
+(cd "$PROJECT_DIR" && zip -q -j "$ZIP" LICENSE)
+
 # 4. Verify the bundle carries everything a fresh install needs.
 echo
 echo "bundle contents:"
@@ -49,6 +55,7 @@ unzip -l "$ZIP"
 
 missing=0
 for entry in \
+    LICENSE \
     metadata.json \
     extension.js \
     prefs.js \

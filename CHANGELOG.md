@@ -5,7 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [Unreleased]
+
+### Added
+
+- Preferences window reports whether the background daemon is running (a
+  session-bus name lookup, live-updating while the window is open) and, when
+  it is not, shows the copyable commands that install it on any systemd +
+  GNOME 50 distribution — the state every extensions.gnome.org install starts
+  in.
+- `scripts/package-extension.sh` puts `LICENSE` at the top level of the
+  extension bundle, which extensions.gnome.org reviewers check for.
+- README and `docs/installation.md`: install path and dependency package
+  names for non-Fedora distributions, with an explicit note that only
+  Fedora 44 / GNOME 50 / Wayland is tested.
+
+## [0.1.0] - 2026-10-03
 
 Initial structured release of the two-component design (GNOME Shell extension +
 companion `evdev`/`uinput` daemon).
