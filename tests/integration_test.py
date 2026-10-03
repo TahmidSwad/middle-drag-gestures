@@ -20,6 +20,7 @@ Run from the repository root::
 
 from __future__ import annotations
 
+import glob
 import pathlib
 import select
 import signal
@@ -58,6 +59,29 @@ class TestFailure(Exception):
     pass
 
 
+def event_nodes() -> set[str]:
+    """Every event node the kernel exposes, readable by us or not.
+
+    evdev.list_devices() keeps only nodes the current user can read *and*
+    write (it filters with os.access(R_OK | W_OK)), so a device that exists
+    but is 0660 root:input with no ACL for us is invisible to it - exactly
+    the situation this suite has to detect instead of waiting forever for a
+    name it will never be shown.
+    """
+    return set(glob.glob("/dev/input/event*"))
+
+
+def hidden_nodes_hint() -> str:
+    """Suffix for a timeout when nodes exist but evdev cannot open them."""
+    hidden = event_nodes() - set(list_devices())
+    if not hidden:
+        return ""
+    return (
+        f" ({len(hidden)} node(s) exist but evdev cannot open them: "
+        "not read+writable for this user)"
+    )
+
+
 def find_event_path(name: str, timeout: float = 6.0, exclude: set | None = None) -> str:
     """Return the path of a device called *name*.
 
@@ -81,7 +105,9 @@ def find_event_path(name: str, timeout: float = 6.0, exclude: set | None = None)
             finally:
                 device.close()
         time.sleep(0.1)
-    raise TestFailure(f"device {name!r} did not appear within {timeout}s")
+    raise TestFailure(
+        f"device {name!r} did not appear within {timeout}s{hidden_nodes_hint()}"
+    )
 
 
 def device_paths_named(name: str) -> set:
@@ -97,6 +123,37 @@ def device_paths_named(name: str) -> set:
         finally:
             device.close()
     return paths
+
+
+def new_device_unreadable(before: set[str], settle: float = 3.0) -> str | None:
+    """Why the device we just created cannot be read, if it cannot be.
+
+    Creating it only needs write access to /dev/uinput (the uaccess ACL or
+    the 'input' group), but reading it back needs access to the NEW
+    /dev/input/eventN node, which udev creates as 0660 root:input.  With the
+    product's udev rule not installed there is no ACL for that node and this
+    user has no group to fall back on.  list_devices() filters such a node
+    out completely, so the test would wait for a name it is never shown and
+    fail with a misleading "did not appear in time" - hence the raw glob.
+    """
+    deadline = time.time() + settle
+    created: set[str] = set()
+    while time.time() < deadline:
+        created = event_nodes() - before
+        if created:
+            break
+        time.sleep(0.2)
+    for path in sorted(created):
+        try:
+            InputDevice(path).close()
+        except PermissionError:
+            return (
+                f"created {path} (0660 root:input) but opening it failed: "
+                "permission denied for this user"
+            )
+        except OSError:
+            continue
+    return None
 
 
 def wait_for(predicate, timeout: float, what: str):
@@ -241,8 +298,21 @@ def main() -> int:
     failures: list[str] = []
     skips: list[str] = []
 
+    before = event_nodes()
     fake = UInput(FAKE_CAPS, name=FAKE_NAME, version=1)
     time.sleep(0.6)
+    problem = new_device_unreadable(before)
+    if problem is not None:
+        fake.close()
+        print("SKIP - the integration test cannot run on this machine")
+        print(f"  {problem}")
+        print("  This machine offers neither of the two ways to read /dev/input:")
+        print("    - the product's udev rule, which tags new input devices with")
+        print("      uaccess (install it: ./scripts/install.sh, or dnf install the RPM),")
+        print("    - nor membership in the 'input' group")
+        print("      (sudo usermod -aG input \"$USER\" and log in again).")
+        print("\nexit 0: environment skip - no assertion was made, not a pass.")
+        return 0
     fake_path = find_event_path(FAKE_NAME)
     print(f"synthetic mouse: {fake_path}")
 

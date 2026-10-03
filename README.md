@@ -149,6 +149,12 @@ make test | verify | matrix | release | zip | install | uninstall | clean
 
 `make release` is the gate: unit + integration + extension + install matrix.
 
+The integration test creates a synthetic mouse and then has to read it back,
+so it needs read/write access to the `event*` node udev creates for it — the
+very access the shipped udev rule (or membership in the `input` group)
+provides. On a machine where the product is not installed it prints `SKIP`
+with both ways to get that access instead of timing out.
+
 `verify-extension.sh` exists because GNOME Shell caches extension code for the
 lifetime of the session: editing `extension.js` does nothing until you log
 out. The script starts a second, headless GNOME Shell on a private session
