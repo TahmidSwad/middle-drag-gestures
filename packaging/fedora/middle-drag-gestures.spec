@@ -27,10 +27,15 @@
 # package therefore reloads udev rules in %post and %postun but does not
 # try to chmod the node - it cannot know what it was before the rule.
 #
-# Build (Source0 has no real URL in this repository, so `spectool -g` does
-# not work - make the tarball from the checkout instead):
+# Build (Source0 is the GitHub tag archive, so spectool fetches it; a local
+# tarball of the same name in ~/rpmbuild/SOURCES is used instead, which is
+# how a checkout is built without the network):
 #
 #   mkdir -p ~/rpmbuild/SOURCES
+#   spectool -g -C ~/rpmbuild/SOURCES packaging/fedora/middle-drag-gestures.spec
+#   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
+#
+#   # offline, straight from a checkout:
 #   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.0/ \
 #     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.0.tar.gz HEAD
 #   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
@@ -77,8 +82,8 @@ Release:        1%{?dist}
 Summary:        System-wide middle-mouse drag gestures for GNOME on Wayland
 
 License:        MIT
-URL:            https://example.invalid/middle-drag-gestures
-Source0:        %{name}-%{version}.tar.gz
+URL:            https://github.com/TahmidSwad/middle-drag-gestures
+Source0:        https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
@@ -178,6 +183,15 @@ glib-compile-schemas %{_datadir}/glib-2.0/schemas > /dev/null 2>&1 || :
 udevadm control --reload-rules > /dev/null 2>&1 || :
 udevadm trigger --subsystem-match=misc > /dev/null 2>&1 || :
 udevadm trigger --subsystem-match=input > /dev/null 2>&1 || :
+
+# The one step a package must not perform: switching on extension code inside
+# a user's compositor is per-user opt-in and dconf belongs to the running
+# session, so say it where the user is looking.
+echo ""
+echo "Middle-Drag Gestures installed. Next (as your own user, not root):"
+echo "  gnome-extensions enable middle-drag-gestures@swad"
+echo "then log out and log back in once - GNOME Shell loads extension code at login."
+echo ""
 
 %preun
 %systemd_user_preun middle-drag-daemon.service

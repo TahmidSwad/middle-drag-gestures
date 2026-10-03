@@ -177,16 +177,21 @@ extension, prefs, GSettings schema, daemon, udev rule and user unit - into
 `/usr`:
 
 ```bash
-sudo dnf install -y rpm-build systemd-rpm-macros
+sudo dnf install -y rpm-build rpmdevtools
 
-# Source0 has no real URL in this repository, so `spectool -g` does not
-# work - make the tarball from the checkout instead:
+# Source0 is the GitHub tag archive, so spectool fetches it for rpmbuild:
 mkdir -p ~/rpmbuild/SOURCES
-git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.0/ \
-  -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.0.tar.gz HEAD
+spectool -g -C ~/rpmbuild/SOURCES packaging/fedora/middle-drag-gestures.spec
 
 rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
+```
+
+Or skip the build entirely: install the `.rpm` asset attached to each
+[GitHub release](https://github.com/TahmidSwad/middle-drag-gestures/releases):
+
+```bash
+sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.0/middle-drag-gestures-0.1.0-1.fc44.noarch.rpm
 ```
 
 The unit **enables itself**. Fedora's default policy for user units is

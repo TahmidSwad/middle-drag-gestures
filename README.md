@@ -56,6 +56,43 @@ middle-drag-gestures/
 
 ## Quick start
 
+### As an end user (release RPM)
+
+```bash
+sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.0/middle-drag-gestures-0.1.0-1.fc44.noarch.rpm
+gnome-extensions enable middle-drag-gestures@swad
+```
+
+Then **log out and log back in once** — Wayland loads extension code only at
+login, and that login is also when systemd-logind grants the device ACL. No
+`input` group membership is needed and none is added. Check:
+
+```bash
+gnome-extensions info middle-drag-gestures@swad
+systemctl --user status middle-drag-daemon.service
+```
+
+Remove it again:
+
+```bash
+gnome-extensions disable middle-drag-gestures@swad   # first: no dangling uuid
+sudo dnf remove middle-drag-gestures
+```
+
+### From source
+
+```bash
+git clone https://github.com/TahmidSwad/middle-drag-gestures.git
+cd middle-drag-gestures
+sudo dnf install rpm-build rpmdevtools               # rpmbuild + spectool
+mkdir -p ~/rpmbuild/SOURCES
+spectool -g -C ~/rpmbuild/SOURCES packaging/fedora/middle-drag-gestures.spec
+rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
+sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
+```
+
+### In this checkout (development)
+
 ```bash
 ./scripts/install.sh
 ```
