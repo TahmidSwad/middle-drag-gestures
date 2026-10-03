@@ -120,14 +120,18 @@ export default class MiddleDragPreferences extends ExtensionPreferences {
     }
 
     _queryDaemon(apply) {
+        // NameHasOwner(s) -> (b).  Gio.DBus.session.call() takes its
+        // arguments positionally: the GVariant *parameters* come before the
+        // GVariantType *reply type* - with them swapped, GJS throws a
+        // TypeError while marshalling and the preferences window never
+        // opens, before any of this runs.
         Gio.DBus.session.call(
             'org.freedesktop.DBus',
             '/org/freedesktop/DBus',
             'org.freedesktop.DBus',
             'NameHasOwner',
-            new GLib.VariantType('(s)'),
             new GLib.Variant('(s)', [DAEMON_DBUS_NAME]),
-            null,
+            new GLib.VariantType('(b)'),
             Gio.DBusCallFlags.NONE,
             -1,
             null,
