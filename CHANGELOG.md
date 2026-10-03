@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-03
+
+### Fixed
+
+- The preferences window failed to open since 0.1.1: the daemon status
+  lookup passed a `GLib.VariantType` where `Gio.DBus.session.call()` expects
+  the method parameters, so GJS threw while marshalling the call and the
+  constructor aborted. The window builds again and the status row tracks the
+  daemon live.
+- The systemd user unit's `Documentation=` line pointed at the developer's
+  checkout (`file:%h/Desktop/projects/...`), a path no other user has. It
+  now points at the repository.
+
+### Changed
+
+- Documentation rewritten: requirements stated up front (including that no
+  X11 session is tested), one shared verify/remove block instead of one per
+  install route, the daemon's command-line flags documented, the RPM
+  presented as a route of equal standing, and a "Cutting a release"
+  section written in the order releases are actually cut.
+- Every script answers `--help` and rejects unknown arguments - previously
+  `./scripts/enable.sh --help` would have enabled the product.
+- All `extensions.gnome.org` references removed: distribution is the GitHub
+  release RPM plus the source tarball.
+- `plan.md`, the superseded design document, removed in favour of `docs/`.
+
 ## [0.1.1] - 2026-10-03
 
 ### Added

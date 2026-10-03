@@ -36,8 +36,8 @@
 #   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 #
 #   # offline, straight from a checkout:
-#   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.1/ \
-#     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.1.tar.gz HEAD
+#   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.2/ \
+#     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.2.tar.gz HEAD
 #   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 #
 # systemd-rpm-macros supplies _userunitdir, _udevrulesdir and the
@@ -77,7 +77,7 @@
 %global extensiondir %{_datadir}/gnome-shell/extensions/%{uuid}
 
 Name:           middle-drag-gestures
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        System-wide middle-mouse drag gestures for GNOME on Wayland
 
@@ -217,6 +217,16 @@ fi
 %{_datadir}/glib-2.0/schemas/%{schema_id}.gschema.xml
 
 %changelog
+* Sat Oct 03 2026 Swad <swad@localhost> - 0.1.2-1
+- Fix the preferences window, which failed to open since 0.1.1: the
+  daemon status lookup passed a GVariantType where the D-Bus method
+  parameters belong
+- The systemd user unit's Documentation link points at the repository
+  instead of the developer's checkout
+- Documentation rewritten: requirements up front, one verify/remove block
+  for every install route, no extensions.gnome.org references, release
+  procedure documented
+
 * Sat Oct 03 2026 Swad <swad@localhost> - 0.1.1-1
 - Preferences window reports daemon status and shows the install commands
 - LICENSE included in the extension bundle
