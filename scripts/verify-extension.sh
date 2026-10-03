@@ -28,6 +28,28 @@
 #
 set -u
 
+usage() {
+    # print the leading comment block, skipping the shebang and any blank
+    # line above the title; editing the header can never desync --help the
+    # way a hard-coded line range would.
+    awk 'NR == 1 {next}
+         /^#/ {sub(/^# ?/, ""); if ($0 != "" || seen) {seen = 1; print}; next}
+         {exit}' "${BASH_SOURCE[0]}"
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    '')
+        ;;
+    *)
+        printf 'Usage: %s [--help]\n' "${0##*/}" >&2
+        exit 1
+        ;;
+esac
+
 # Run everything on a private session bus: a second GNOME Shell must never
 # join the real desktop session's bus (it would fight over org.gnome.Shell).
 #

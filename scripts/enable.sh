@@ -11,6 +11,28 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
 . "$PROJECT_DIR/scripts/lib.sh"
 
+usage() {
+    # print the leading comment block, skipping the shebang and any blank
+    # line above the title; editing the header can never desync --help the
+    # way a hard-coded line range would.
+    awk 'NR == 1 {next}
+         /^#/ {sub(/^# ?/, ""); if ($0 != "" || seen) {seen = 1; print}; next}
+         {exit}' "${BASH_SOURCE[0]}"
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    '')
+        ;;
+    *)
+        printf 'Usage: %s [--help]\n' "${0##*/}" >&2
+        exit 1
+        ;;
+esac
+
 printf 'Enabling Middle-Drag Gestures\n'
 
 if [ ! -f "${HOME}/.local/bin/middle-drag-daemon.py" ] &&

@@ -161,6 +161,29 @@ python3 tests/integration_test.py          # end-to-end test with a synthetic mo
 ./scripts/verify-clean.sh                  # exit 0 only if nothing is left
 ```
 
+### Scripts
+
+Every script accepts `--help`, re-runs safely and exits non-zero on a
+broken machine. Only `install.sh` and `uninstall.sh` ever ask for root,
+and only to place or remove the udev rule (plus `modprobe uinput` if the
+module is not loaded).
+
+| script | does | notes |
+| --- | --- | --- |
+| `install.sh` | preflight → files → permissions → enable, rolling back on failure | missing-dependency hints name the `dnf` and `apt` packages; translate them for other distros |
+| `uninstall.sh` | remove the installation (`--purge` also dconf and install state) | never calls `rpm`, `dnf` or `apt` — removes the same way on any systemd distro |
+| `enable.sh` / `disable.sh` | start or stop the daemon and extension without installing or removing anything | refuses to run when nothing is installed; portable |
+| `verify-clean.sh` | exit 0 only if nothing is left (`--purge`, `--scope=script`) | its `rpm -q` check runs only where `rpm` exists (Fedora and other rpm distros) and is skipped elsewhere |
+| `verify-extension.sh` | load the extension in a nested GNOME Shell, then exercise prefs and the D-Bus interface | needs a running GNOME Wayland session and `dbus-run-session` (package `dbus-daemon`) |
+| `package-extension.sh` | build `dist/*.shell-extension.zip` for extensions.gnome.org | needs `gnome-extensions`, `zip` and `glib-compile-schemas` |
+| `lib.sh` | shared paths, state helpers and the `mdg_*` functions | sourced by the other scripts, never run directly |
+
+Everything else they call — `systemctl --user`, `gnome-extensions`,
+`udevadm`, `dconf` — ships with systemd, GLib and GNOME everywhere, so
+the scripts themselves are distribution-neutral. **The only
+Fedora-specific files in the repository are `packaging/fedora/`** (the
+RPM spec and its preset), plus the `dnf` package-name hints above.
+
 The same targets exist in the `Makefile` if you have `make`:
 
 ```bash
