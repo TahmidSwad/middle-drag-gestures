@@ -558,8 +558,8 @@ Gesture configuration:
 
   Middle + Left   -> Next workspace
   Middle + Right  -> Previous workspace
-  Middle + Up     -> Hide Overview
-  Middle + Down   -> Show Overview
+  Middle + Up     -> Show Overview
+  Middle + Down   -> Hide Overview
 
 Configuration:
   gnome-extensions prefs middle-drag-gestures@swad

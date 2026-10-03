@@ -48,12 +48,12 @@
     </key>
 
     <key name="up-action" enum="org.gnome.shell.extensions.middle-drag.Action">
-      <default>'hide-overview'</default>
+      <default>'show-overview'</default>
       <summary>Action for an upward drag</summary>
     </key>
 
     <key name="down-action" enum="org.gnome.shell.extensions.middle-drag.Action">
-      <default>'show-overview'</default>
+      <default>'hide-overview'</default>
       <summary>Action for a downward drag</summary>
     </key>
 

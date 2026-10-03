@@ -89,8 +89,8 @@ LEGACY_METHODS = {
 DEFAULT_ACTIONS = {
     "left-action": "next-workspace",
     "right-action": "previous-workspace",
-    "up-action": "hide-overview",
-    "down-action": "show-overview",
+    "up-action": "show-overview",
+    "down-action": "hide-overview",
 }
 
 DIRECTION_KEYS = {

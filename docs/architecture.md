@@ -108,7 +108,7 @@ Default mapping:
           MIDDLE + UP
                 │
                 ▼
-         Hide Overview
+         Show Overview
 
 MIDDLE + LEFT              MIDDLE + RIGHT
       │                          │
@@ -118,7 +118,7 @@ MIDDLE + LEFT              MIDDLE + RIGHT
           MIDDLE + DOWN
                 │
                 ▼
-         Show Overview
+         Hide Overview
 ```
 
 Each direction maps to a configurable action

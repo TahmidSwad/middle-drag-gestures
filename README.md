@@ -5,12 +5,12 @@ System-wide **middle-mouse-button drag gestures on Wayland** for GNOME.
 Hold the middle mouse button and drag to control the desktop — even while the
 pointer is over application windows:
 
-| Gesture             | Action            |
-| ------------------- | ----------------- |
-| Middle + drag LEFT  | Next workspace    |
+| Gesture             | Action             |
+| ------------------- | ------------------ |
+| Middle + drag LEFT  | Next workspace     |
 | Middle + drag RIGHT | Previous workspace |
-| Middle + drag UP    | Close Overview    |
-| Middle + drag DOWN  | Open Overview     |
+| Middle + drag UP    | Open Overview      |
+| Middle + drag DOWN  | Close Overview     |
 
 Every direction is configurable: `none`, `next-workspace`,
 `previous-workspace`, `show-overview` or `hide-overview`.
