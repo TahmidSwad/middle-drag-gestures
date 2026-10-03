@@ -1,6 +1,6 @@
 [Unit]
 Description=Middle-Drag Gestures input daemon (evdev/uinput)
-Documentation=file:%h/Desktop/projects/middle-drag-gestures/docs/architecture.md
+Documentation=https://github.com/TahmidSwad/middle-drag-gestures/blob/main/docs/architecture.md
 After=graphical-session.target
 Wants=graphical-session.target
 

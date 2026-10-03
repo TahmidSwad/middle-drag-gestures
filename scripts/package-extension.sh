@@ -6,10 +6,10 @@
 #
 # The bundle contains the extension (metadata.json, extension.js, prefs.js,
 # stylesheet.css, the GSettings schema and its compiled form) plus the LICENSE,
-# which extensions.gnome.org reviewers expect to find in it.  The daemon, udev
-# rule and systemd unit are distributed separately - an
-# extension bundle cannot write to /etc/udev/rules.d or manage systemd
-# units.  See docs/installation.md and packaging/fedora/.
+# so a shared archive is self-contained.  It is the GNOME half only: the
+# daemon, udev rule and systemd unit come from scripts/install.sh or the RPM,
+# because an extension bundle cannot write to /etc/udev/rules.d or manage
+# systemd units.  See docs/installation.md and packaging/fedora/.
 #
 set -euo pipefail
 
@@ -99,7 +99,7 @@ echo
 # GNOME Extensions requires an integer "version" in metadata.json, so it is
 # a monotonically increasing counter while VERSION is the project's
 # semantic version.  They are deliberately different.
-echo "metadata.json version : $META_VERSION (integer counter for extensions.gnome.org)"
+echo "metadata.json version : $META_VERSION (integer counter - bump it every release)"
 echo "VERSION file          : $RELEASE_VERSION (project release)"
 
 echo

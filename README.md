@@ -5,12 +5,15 @@ System-wide **middle-mouse-button drag gestures on Wayland** for GNOME.
 Hold the middle mouse button and drag to control the desktop — even while the
 pointer is over application windows:
 
-| Gesture             | Action           |
-| ------------------- | ---------------- |
-| Middle + drag LEFT  | Next workspace   |
+| Gesture             | Action            |
+| ------------------- | ----------------- |
+| Middle + drag LEFT  | Next workspace    |
 | Middle + drag RIGHT | Previous workspace |
-| Middle + drag UP    | Close Overview   |
-| Middle + drag DOWN  | Open Overview    |
+| Middle + drag UP    | Close Overview    |
+| Middle + drag DOWN  | Open Overview     |
+
+Every direction is configurable: `none`, `next-workspace`,
+`previous-workspace`, `show-overview` or `hide-overview`.
 
 ## Why two components
 
@@ -26,64 +29,44 @@ physical mouse ──► input daemon ──► virtual mouse ──► Wayland 
 ```
 
 * **GNOME Shell extension** (`extension/middle-drag-gestures@swad`) owns
-  everything GNOME-specific: workspace switching, Overview, GSettings and the
-  preferences UI. It exports a small D-Bus interface.
+  everything GNOME-specific: workspace switching, the Overview, GSettings and
+  the preferences UI. It exports a small D-Bus interface.
 * **Input daemon** (`daemon/middle-drag-daemon.py`) owns everything
   Linux-specific: reading `/dev/input`, grabbing the physical mouse,
   detecting gestures, forwarding normal events through a `uinput` virtual
   mouse, and consuming middle-button events.
 
 Neither side needs to know how the other works; **D-Bus is the boundary**.
-
 The daemon runs as the logged-in user via a `systemd --user` unit — never as
 root.
 
-## Repository layout
+## Requirements
 
-```text
-middle-drag-gestures/
-├── extension/middle-drag-gestures@swad/   GNOME Shell extension
-├── daemon/                                Python daemon + systemd user unit
-├── udev/                                  udev rule for /dev/uinput
-├── scripts/                               install / uninstall / enable / disable
-│                                          / verify-clean / verify-extension
-├── docs/                                  architecture, installation, troubleshooting
-├── packaging/fedora/                      RPM spec (ships the whole product)
-├── tests/                                 unit, integration and install-matrix tests
-└── CHANGELOG.md
-```
+* GNOME Shell **50** on **Wayland** — the extension declares
+  `"shell-version": ["50"]`; an X11 session is untested.
+* systemd + udev + logind, and the `uinput` kernel module:
+  `lsmod | grep uinput || sudo modprobe uinput`
+* Python 3 with `python3-evdev`, `python3-dbus`, `python3-gobject`, plus
+  `glib2` (for `glib-compile-schemas`). Debian/Ubuntu: `python3-evdev
+  python3-dbus python3-gi libglib2.0-bin`.
+* **No `input` group membership** — the shipped udev rule grants the session
+  access through a per-login `uaccess` ACL, and no account is ever modified.
 
-## Quick start
+**Tested on Fedora 44 (GNOME Shell 50.5, Wayland) only.** Any other
+distribution with systemd, udev, logind and GNOME 50 should work: supported
+by design, not yet by test.
 
-### As an end user (release RPM)
+## Install
+
+### Fedora — release RPM (recommended)
 
 ```bash
 sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.1/middle-drag-gestures-0.1.1-1.fc44.noarch.rpm
 gnome-extensions enable middle-drag-gestures@swad
+# systemctl --user start middle-drag-daemon.service   # only to run it before the relogin
 ```
 
-Then **log out and log back in once** — Wayland loads extension code only at
-login, and that login is also when systemd-logind grants the device ACL. No
-`input` group membership is needed and none is added. Check:
-
-```bash
-gnome-extensions info middle-drag-gestures@swad
-systemctl --user status middle-drag-daemon.service
-```
-
-Remove it again:
-
-```bash
-gnome-extensions disable middle-drag-gestures@swad   # first: no dangling uuid
-sudo dnf remove middle-drag-gestures
-```
-
-### Any other GNOME 50 distro
-
-The extension is also listed on
-[extensions.gnome.org](https://extensions.gnome.org/?search=Middle-Drag%20Gestures)
-(search "Middle-Drag Gestures"). Installing it from there only lays down the
-GNOME half — the daemon still needs one root run:
+### Any other GNOME 50 distro — installer from source
 
 ```bash
 curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.1.tar.gz
@@ -91,20 +74,15 @@ tar -xzf /tmp/middle-drag-gestures.tar.gz -C /tmp
 bash /tmp/middle-drag-gestures-0.1.1/scripts/install.sh
 ```
 
-`install.sh` verifies every dependency before writing a byte and prints the
-package name for your distribution (`dnf`, `apt`, …), then enables the
-extension, starts the daemon and says whether a relogin is needed. It needs
-systemd + udev + GNOME 50. The extension's preferences page shows these same
-commands whenever the daemon is missing.
+`install.sh` checks every dependency before writing a byte, prints the exact
+package name for your distribution (`dnf`, `apt`, …), then lays down the udev
+rule, daemon, systemd unit, extension and GSettings schema, enables all of it
+and reports what is left to do. It runs `sudo` once, for the udev rule (plus
+`modprobe uinput` if the module is missing).
 
-**Tested on Fedora 44 (GNOME 50, Wayland) only** — other distributions are
-supported by design, not yet by test.
-
-### From source
+### Build the RPM yourself
 
 ```bash
-git clone https://github.com/TahmidSwad/middle-drag-gestures.git
-cd middle-drag-gestures
 sudo dnf install rpm-build rpmdevtools               # rpmbuild + spectool
 mkdir -p ~/rpmbuild/SOURCES
 spectool -g -C ~/rpmbuild/SOURCES packaging/fedora/middle-drag-gestures.spec
@@ -118,29 +96,56 @@ sudo dnf install ~/rpmbuild/RPMS/noarch/middle-drag-gestures-*.rpm
 ./scripts/install.sh
 ```
 
-Then log out and back in (once — Wayland reloads extensions only at login) and
-check:
+### After any install: one relogin, then verify
+
+Wayland loads extension code only at login, and that login is also when
+systemd-logind grants the device ACL — so **log out and log back in once**.
+Then:
 
 ```bash
-gnome-extensions info middle-drag-gestures@swad
-systemctl --user status middle-drag-daemon.service
+gnome-extensions info middle-drag-gestures@swad      # Enabled: Yes / State: ACTIVE
+systemctl --user status middle-drag-daemon.service   # Active: active (running)
 ```
 
-Remove it again, with proof that nothing is left:
+Hold the middle button and drag left: you land on the next workspace. The
+preferences page (`gnome-extensions prefs middle-drag-gestures@swad`) shows
+the daemon status live and, when the daemon is missing, the exact commands to
+install it.
+
+### Remove
 
 ```bash
+# from the RPM — disable first, so no dangling uuid is left behind
+gnome-extensions disable middle-drag-gestures@swad
+systemctl --user disable --now middle-drag-daemon.service
+sudo dnf remove middle-drag-gestures
+
+# from a checkout — and prove nothing is left
 ./scripts/uninstall.sh --purge      # files, settings, install state
 ./scripts/verify-clean.sh --purge   # exit 0 only if the machine is clean
 ```
 
-See [docs/installation.md](docs/installation.md) for manual installation and
-[docs/troubleshooting.md](docs/troubleshooting.md) if something misbehaves.
+## Repository layout
+
+```text
+middle-drag-gestures/
+├── extension/middle-drag-gestures@swad/   GNOME Shell extension (UI + D-Bus)
+├── daemon/                                Python daemon + systemd user unit
+├── udev/                                  uaccess rule for /dev/uinput + mice
+├── scripts/                               install, uninstall, enable, disable,
+│                                          verify-clean, verify-extension,
+│                                          package-extension, lib
+├── docs/                                  architecture, installation, troubleshooting
+├── packaging/fedora/                      RPM spec + preset (ships everything)
+├── tests/                                 unit, integration, install-matrix
+├── Makefile   VERSION   CHANGELOG.md   LICENSE
+```
 
 ## Documentation
 
 * [docs/architecture.md](docs/architecture.md) — why the design looks like this
-* [docs/installation.md](docs/installation.md) — dependencies, permissions, installer
-* [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and fixes
+* [docs/installation.md](docs/installation.md) — dependencies, permissions, every install route, flags, verification
+* [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and fixes, layer by layer
 
 ## Development
 
@@ -156,7 +161,7 @@ python3 tests/integration_test.py          # end-to-end test with a synthetic mo
 ./scripts/verify-extension.sh              # load it in a throwaway GNOME Shell
 ./scripts/package-extension.sh             # build dist/*.shell-extension.zip
 
-# deployment
+# day to day
 ./scripts/install.sh | uninstall.sh | enable.sh | disable.sh
 ./scripts/verify-clean.sh                  # exit 0 only if nothing is left
 ```
@@ -175,7 +180,7 @@ module is not loaded).
 | `enable.sh` / `disable.sh` | start or stop the daemon and extension without installing or removing anything | refuses to run when nothing is installed; portable |
 | `verify-clean.sh` | exit 0 only if nothing is left (`--purge`, `--scope=script`) | its `rpm -q` check runs only where `rpm` exists (Fedora and other rpm distros) and is skipped elsewhere |
 | `verify-extension.sh` | load the extension in a nested GNOME Shell, then exercise prefs and the D-Bus interface | needs a running GNOME Wayland session and `dbus-run-session` (package `dbus-daemon`) |
-| `package-extension.sh` | build `dist/*.shell-extension.zip` for extensions.gnome.org | needs `gnome-extensions`, `zip` and `glib-compile-schemas` |
+| `package-extension.sh` | build `dist/*.shell-extension.zip` — a shareable bundle of the GNOME half only (the daemon comes from `install.sh` or the RPM) | needs `gnome-extensions`, `zip` and `glib-compile-schemas` |
 | `lib.sh` | shared paths, state helpers and the `mdg_*` functions | sourced by the other scripts, never run directly |
 
 Everything else they call — `systemctl --user`, `gnome-extensions`,
@@ -184,7 +189,7 @@ the scripts themselves are distribution-neutral. **The only
 Fedora-specific files in the repository are `packaging/fedora/`** (the
 RPM spec and its preset), plus the `dnf` package-name hints above.
 
-The same targets exist in the `Makefile` if you have `make`:
+### Makefile
 
 ```bash
 make test | verify | matrix | release | zip | install | uninstall | clean
@@ -192,27 +197,37 @@ make test | verify | matrix | release | zip | install | uninstall | clean
 
 `make release` is the gate: unit + integration + extension + install matrix.
 
-The integration test creates a synthetic mouse and then has to read it back,
-so it needs read/write access to the `event*` node udev creates for it — the
-very access the shipped udev rule (or membership in the `input` group)
-provides. On a machine where the product is not installed it prints `SKIP`
-with both ways to get that access instead of timing out.
+The integration test creates a synthetic mouse and has to read it back, so it
+needs read/write access to the `event*` node udev creates — the very access
+the shipped udev rule (or `input` group membership) provides. On a machine
+where the product is not installed it prints `SKIP` with both ways to get that
+access instead of timing out.
 
 `verify-extension.sh` exists because GNOME Shell caches extension code for the
 lifetime of the session: editing `extension.js` does nothing until you log
 out. The script starts a second, headless GNOME Shell on a private session
 bus, asserts the full D-Bus contract and opens the preferences window, then
-shuts it down - your desktop is untouched. It runs before anything is
+shuts it down — your desktop is untouched. It runs before anything is
 installed too: when the extension is not in `$HOME` it stages a copy of the
 working tree in a throwaway HOME (your real dconf is never written).
 
-## Requirements
+### Cutting a release
 
-* Fedora 44 (or similar) with GNOME Shell 50 on Wayland
-* `python3`, `python3-evdev`, `python3-dbus`, `python3-gobject`
-* No `input` group membership needed - the shipped udev rule grants the
-  session access through a per-login `uaccess` ACL
-* `uinput` kernel module loaded
+```bash
+# 1. bump VERSION, packaging/fedora/middle-drag-gestures.spec (Version +
+#    %changelog), extension/metadata.json "version", and every version-pinned
+#    URL (README, docs, prefs.js INSTALL_COMMAND); then commit.
+git tag v$(cat VERSION) && git push origin main "v$(cat VERSION)"
+
+# 2. build the RPM from the tag archive — that is what Source0 points at:
+curl -fsSL -o ~/rpmbuild/SOURCES/v$(cat VERSION).tar.gz \
+  https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v$(cat VERSION).tar.gz
+rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
+
+# 3. publish, with the prebuilt RPM as the release asset
+gh release create "v$(cat VERSION)" \
+  ~/rpmbuild/RPMS/noarch/middle-drag-gestures-$(cat VERSION)-*.noarch.rpm
+```
 
 ## License
 

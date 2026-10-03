@@ -33,7 +33,10 @@ and prints the exact package name for your distribution when one is missing,
 so the table is a checklist rather than a prerequisite. Everything here is
 ordinary systemd/udev/GNOME material: any distribution with systemd, udev,
 logind and GNOME 50 can run the project. Only Fedora 44 (GNOME 50, Wayland)
-has actually been tested.
+has actually been tested, and no X11 session has been tested at all - the
+daemon is display-server agnostic by construction (it works below the
+compositor, straight on evdev), but nothing in this project is validated
+outside Wayland.
 
 Kernel side:
 
@@ -183,11 +186,13 @@ which loads the extension in a throwaway headless GNOME Shell. It works on a
 clean checkout too: if the extension is not installed it stages a private copy
 of the working tree (and never touches your real dconf).
 
-### Alternative: install the Fedora RPM
+### The Fedora RPM (the other full route - do not mix the two)
 
 `packaging/fedora/middle-drag-gestures.spec` packages the whole product -
 extension, prefs, GSettings schema, daemon, udev rule and user unit - into
-`/usr`:
+`/usr`. Pick either this route or `./scripts/install.sh`, not both: they
+write to different places (`/usr` vs `~/.local`, `/usr/lib/systemd/user` vs
+`~/.config/systemd/user`), and the user-local copy would shadow the package.
 
 ```bash
 sudo dnf install -y rpm-build rpmdevtools
@@ -313,15 +318,16 @@ gnome-extensions disable middle-drag-gestures@swad
 
 Uninstalling deliberately **keeps** two things, and says so:
 
-* your `input` group membership - other software may need it
 * your dconf settings under `org.gnome.shell.extensions.middle-drag`
+* an `input` group membership - other software may need it
 
 `--purge` removes both, plus the install state file, and drops the `input`
-membership only when the state file says *this project* added it - a
-membership you already had is never touched. The `input` group is a
-deliberate choice; see
-[troubleshooting.md](troubleshooting.md#gestures-do-nothing-but-the-log-shows-the-gesture)
-for why the alternative (udev `uaccess` ACLs) is not used.
+membership **only** when the install state file says *this project* added it,
+which only a release from before the uaccess rule can claim - a membership
+you already had yourself is never touched. Releases that install today never
+modify groups at all, so there is usually nothing to undo: access comes from
+the uaccess ACL described in [§2 Permissions](#2-permissions), which the
+removal of the udev rule takes back with it.
 
 ### Removing the RPM
 
@@ -457,6 +463,16 @@ Available actions: `none`, `next-workspace`, `previous-workspace`,
 `show-overview`, `hide-overview`.
 
 Changes are picked up by the running daemon immediately - no restart needed.
+
+The daemon also accepts command-line overrides, handy for a one-off run in
+the foreground:
+
+| flag | effect |
+| ---- | ------ |
+| `--device PATH` | grab this device instead of the `device` setting (`auto` picks the first match) |
+| `--threshold PIXELS` | use this threshold for this run instead of the `threshold` setting |
+| `--list-devices` | print every suitable input device and exit |
+| `-v` / `--verbose` | debug logging, including each detected gesture |
 
 ---
 

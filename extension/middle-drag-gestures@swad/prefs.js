@@ -24,9 +24,9 @@ const BY_ID_DIR = '/dev/input/by-id';
 // ACTION_METHODS in daemon/middle-drag-daemon.py.
 const DAEMON_DBUS_NAME = 'org.gnome.Shell.Extensions.MiddleDrag';
 
-// What to run on a machine that has the extension but no daemon - exactly
-// the state an extensions.gnome.org install starts in, because an extension
-// bundle cannot write to /etc/udev/rules.d or manage systemd units.
+// What to run on a machine that has the extension but no daemon - the state
+// you get from installing only the extension bundle, which cannot write to
+// /etc/udev/rules.d or manage systemd units.
 // install.sh needs the rest of the checkout beside it, so the release
 // tarball is fetched rather than the lone script, and the commands are shown
 // for reading before they are pasted.  Keep the tag in step with VERSION.
