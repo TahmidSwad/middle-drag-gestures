@@ -151,7 +151,9 @@ Access comes from the uaccess ACL, not from a group membership:
 
 ```bash
 getfacl /dev/input/event3 | grep user:    # expect: user:YOU:rw- …
-ls -l /etc/udev/rules.d/ | grep middle     # expect: 70-middle-drag-uaccess.rules
+ls /usr/lib/udev/rules.d/70-middle-drag-uaccess.rules \
+   /etc/udev/rules.d/70-middle-drag-uaccess.rules 2>/dev/null
+# expect: exactly one path - the RPM's is in /usr/lib, install.sh's in /etc
 ```
 
 If the rule is missing, reinstall it (see
@@ -189,7 +191,16 @@ getfacl /dev/uinput | grep user:   # expect: user:YOU:rw- (the uaccess ACL)
 lsmod | grep uinput || sudo modprobe uinput
 ```
 
-Reinstall the udev rule (needs a terminal for sudo):
+Reinstall the udev rule (needs a terminal for sudo). If you installed
+the RPM, do **not** copy it into `/etc` - a same-named file there shadows
+the packaged rule and would go stale on the next upgrade; reinstall the
+package instead:
+
+```bash
+sudo dnf reinstall middle-drag-gestures
+```
+
+For a script or manual install:
 
 ```bash
 sudo install -m 0644 udev/70-middle-drag-uaccess.rules \

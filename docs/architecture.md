@@ -226,6 +226,13 @@ The runtime footprint is:
 /etc/udev/rules.d/70-middle-drag-uaccess.rules
 ```
 
+That is a script install. The RPM ships the same five things under the
+distribution's own directories instead: `/usr/libexec/middle-drag-daemon`,
+`/usr/lib/systemd/user/middle-drag-daemon.service`,
+`/usr/share/gnome-shell/extensions/middle-drag-gestures@swad/`,
+`/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml`
+and `/usr/lib/udev/rules.d/70-middle-drag-uaccess.rules`.
+
 ---
 
 ## 6. Design principles

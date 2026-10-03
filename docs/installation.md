@@ -57,8 +57,17 @@ Instead, the shipped udev rule tags both device classes with `uaccess`, which
 is how systemd-logind already hands you `/dev/snd/*`:
 
 ```text
-/etc/udev/rules.d/70-middle-drag-uaccess.rules
+install.sh / manual:  /etc/udev/rules.d/70-middle-drag-uaccess.rules
+the RPM:              /usr/lib/udev/rules.d/70-middle-drag-uaccess.rules
 ```
+
+Same file, two directories. udev reads both, but a *packaged* rule belongs
+in `/usr/lib` so `rpm -V` can verify it and `dnf remove` can take it away
+again, which is why the package puts it there; `/etc/udev/rules.d` is the
+local administrator's directory, which is why the script and the manual
+steps use it. Never leave a copy in both: a same-named file in `/etc`
+shadows the packaged one, so the next upgrade would silently leave the
+stale copy in charge.
 
 ```udev
 KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
