@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-03
+
+### Changed
+
+- The vertical gestures are swapped: dragging the middle button **up** now
+  opens the Overview, **down** closes it (previously the other way round).
+  The default exists in two copies - the GSettings schema and the daemon's
+  fallback table - and both were changed, along with the README table, the
+  architecture diagram and the installer's summary. Users who picked their
+  own up/down action in the preferences keep it.
+- New `tests/test_defaults.py`: parses the schema XML and asserts it against
+  the daemon's fallback, that every default resolves to a known D-Bus
+  method, that all four directions are declared, and that the shipped
+  orientation matches the documentation.
+
 ## [0.1.2] - 2026-10-03
 
 ### Fixed
