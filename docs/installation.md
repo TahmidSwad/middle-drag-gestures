@@ -333,7 +333,6 @@ removal of the udev rule takes back with it.
 
 ```bash
 gnome-extensions disable middle-drag-gestures@swad        # BEFORE removal
-systemctl --user disable --now middle-drag-daemon.service
 sudo dnf remove middle-drag-gestures
 ```
 
@@ -341,7 +340,20 @@ sudo dnf remove middle-drag-gestures
 `gsettings get` correctly reports *No such schema*), stops the daemon
 gracefully — the journal shows `SIGTERM` → `virtual mouse removed` →
 `physical mouse released` — and clears the enable symlink, even though the
-scriptlet runs as root.
+scriptlet runs as root. How it reaches into your session: `%systemd_user_preun`
+calls Fedora's `systemd-update-helper remove-user-units`, which runs one
+`systemctl --global disable` (that is the symlink, in
+`/etc/systemd/user/…wants`) and then `systemctl --user -M NN@ disable --now`
+against every running `user@NN` (that is the daemon, stopped in place). No
+manual `systemctl` line is needed for either half.
+
+That helper is only invoked `if [ -x /usr/lib/systemd/systemd-update-helper ]`,
+so a system without it - a non-Fedora rpm distro installing this RPM - would
+get neither half; there, run the second half yourself:
+
+```bash
+systemctl --user disable --now middle-drag-daemon.service
+```
 
 Two things it cannot reach, because both live in your session:
 

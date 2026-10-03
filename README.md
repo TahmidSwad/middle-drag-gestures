@@ -115,10 +115,10 @@ install it.
 ### Remove
 
 ```bash
-# from the RPM — disable first, so no dangling uuid is left behind
+# from the RPM — this one first: dconf belongs to your running session, so
+# the package cannot write it and the uuid would dangle until the next login
 gnome-extensions disable middle-drag-gestures@swad
-systemctl --user disable --now middle-drag-daemon.service
-sudo dnf remove middle-drag-gestures
+sudo dnf remove middle-drag-gestures     # stops the daemon + clears the symlink itself
 
 # from a checkout — and prove nothing is left
 ./scripts/uninstall.sh --purge      # files, settings, install state
