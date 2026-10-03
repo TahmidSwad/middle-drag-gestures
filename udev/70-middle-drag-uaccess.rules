@@ -1,0 +1,37 @@
+# Middle-Drag Gestures: per-session device access, no account changes.
+#
+# The daemon opens /dev/input/event* and /dev/uinput.  Both are 0660
+# root:input, which used to mean "add the user to the 'input' group" - a
+# permanent, machine-wide edit to /etc/group that a package must not make for
+# an account it does not know, and that only applies at the NEXT login.
+#
+# Instead this rule tags the devices with `uaccess` and lets systemd-logind
+# grant the active local session an ACL on them - the same mechanism that
+# gives an unprivileged desktop user /dev/snd/*.
+#
+# The file is named 70-* ON PURPOSE.  udev applies rules in lexical order, so
+# this must sort before the two rules that consume the tag:
+#
+#   71-seat.rules        TAG=="uaccess", SUBSYSTEM!="sound", TAG+="seat"
+#   73-seat-late.rules   TAG=="uaccess" -> RUN{builtin}+="uaccess"
+#
+# A 99-* name adds the tag too late: on a device's first event - exactly what
+# happens at boot, before any session exists - 73-seat-late has already run
+# without matching, so no ACL is granted until some later event.
+#
+# OPTIONS+="static_node=uinput" registers /dev/uinput in
+# /run/udev/static_node-tags/uaccess/, the list systemd-logind reads when a
+# session starts.  /dev/uinput IS a static node (modules.devname:
+# "uinput uinput c10:223", created by systemd-tmpfiles at boot), so without
+# this option a fresh boot leaves it with no ACL at login.  Fedora does the
+# same for /dev/snd/seq and /dev/snd/timer in 50-udev-default.rules.
+#
+# GROUP/MODE are kept for continuity: the node stays 0660 root:input, exactly
+# what 50-udev-default.rules gives every other input device, and remains the
+# fallback for anything outside a seat session.
+#
+# Verified on Fedora 44 / GNOME 50.5: after a fresh boot and login, /dev/uinput
+# and all 20 input nodes carry user:<session user>:rw- one second after session
+# start, and all three device classes open with ZERO supplementary groups.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
+SUBSYSTEM=="input", TAG+="uaccess"

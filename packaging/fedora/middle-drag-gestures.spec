@@ -5,22 +5,25 @@
 # Contents:
 #
 #   /usr/libexec/middle-drag-daemon
-#   /usr/lib/udev/rules.d/99-middle-drag-uinput.rules
+#   /usr/lib/udev/rules.d/70-middle-drag-uaccess.rules
 #   /usr/lib/systemd/user/middle-drag-daemon.service
 #   /usr/share/gnome-shell/extensions/middle-drag-gestures@swad/
 #   /usr/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml
 #
-# Two steps remain per user afterwards, because a package cannot perform
-# them for an arbitrary account.  Both take effect at the next login:
+# One step remains per user afterwards, because a package cannot perform it
+# for an arbitrary account:
 #
-#   1. sudo usermod -aG input "$USER"    # read /dev/input, write /dev/uinput
-#   2. gnome-extensions enable middle-drag-gestures@swad
+#   gnome-extensions enable middle-drag-gestures@swad
 #
-# See docs/installation.md for the details.
+# Device access needs no account change: the rule below tags /dev/uinput and
+# every input device with `uaccess`, so systemd-logind grants the active
+# local session an ACL when it starts - verified after a fresh boot with zero
+# supplementary groups (docs/installation.md).
 #
 # Known caveat: deleting the udev rule does not recompute the permissions
 # already applied to /dev/uinput, so the node keeps 0660 root:input after
-# removal until the next reboot recreates it with the kernel default.  This
+# removal until the next reboot recreates it with the kernel default, and the
+# uaccess ACL stays on the nodes until the next session change.  This
 # package therefore reloads udev rules in %post and %postun but does not
 # try to chmod the node - it cannot know what it was before the rule.
 #
@@ -39,15 +42,15 @@
 #
 # Built and verified on Fedora 44 / GNOME Shell 50.5 (2026-10-03):
 # rpmbuild clean with no unpackaged files, `rpm -V` clean after install,
-# the udev rule really fires (/dev/uinput -> 0660 root:input), the system
-# schema resolves for gsettings, the extension reaches State: ACTIVE in a
-# running Shell, and the daemon grabs the mouse and answers GetStatus on
-# org.gnome.Shell.Extensions.MiddleDrag.
+# the udev rule really fires (/dev/uinput -> 0660 root:input, and the session
+# gets user:<you>:rw- on it and on every input node one second after login,
+# with zero supplementary groups), the system schema resolves for gsettings,
+# the extension reaches State: ACTIVE in a running Shell, and the daemon
+# grabs the mouse and answers GetStatus on org.gnome.Shell.Extensions.MiddleDrag.
 #
-# A package cannot perform per-user steps, so these two stay manual
+# A package cannot perform per-user steps, so one stays manual
 # (docs/installation.md):
 #
-#   sudo usermod -aG input "$USER"                  # applies at next login
 #   gnome-extensions enable middle-drag-gestures@swad
 #
 # The unit needs no command: 50-middle-drag-gestures.preset makes the
@@ -115,9 +118,9 @@ as root.
 install -D -p -m 0755 daemon/middle-drag-daemon.py \
     %{buildroot}%{_libexecdir}/middle-drag-daemon
 
-# --- udev rule (grants the 'input' group access to /dev/uinput) -----------
-install -D -p -m 0644 udev/99-middle-drag-uinput.rules \
-    %{buildroot}%{_udevrulesdir}/99-middle-drag-uinput.rules
+# --- udev rule (uaccess tag: logind grants the session device access) ------
+install -D -p -m 0644 udev/70-middle-drag-uaccess.rules \
+    %{buildroot}%{_udevrulesdir}/70-middle-drag-uaccess.rules
 
 # --- systemd user unit ----------------------------------------------------
 install -d -m 0755 %{buildroot}%{_userunitdir}
@@ -169,9 +172,12 @@ install -p -m 0644 extension/%{uuid}/schemas/%{schema_id}.gschema.xml \
 %systemd_user_post middle-drag-daemon.service
 # No file trigger for schemas on this distro, so rebuild the cache here.
 glib-compile-schemas %{_datadir}/glib-2.0/schemas > /dev/null 2>&1 || :
-# Make the new rule take effect without a reboot.
+# Make the new rule take effect without a reboot: misc covers /dev/uinput,
+# input re-evaluates the tag on every input node so the session's ACL lands
+# without waiting for a reboot.
 udevadm control --reload-rules > /dev/null 2>&1 || :
 udevadm trigger --subsystem-match=misc > /dev/null 2>&1 || :
+udevadm trigger --subsystem-match=input > /dev/null 2>&1 || :
 
 %preun
 %systemd_user_preun middle-drag-daemon.service
@@ -190,7 +196,7 @@ fi
 %license LICENSE
 %doc README.md CHANGELOG.md docs/architecture.md docs/installation.md docs/troubleshooting.md
 %{_libexecdir}/middle-drag-daemon
-%{_udevrulesdir}/99-middle-drag-uinput.rules
+%{_udevrulesdir}/70-middle-drag-uaccess.rules
 %{_userunitdir}/middle-drag-daemon.service
 %{_userpresetdir}/50-middle-drag-gestures.preset
 %{extensiondir}/

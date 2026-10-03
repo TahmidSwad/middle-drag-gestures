@@ -32,46 +32,61 @@ lsmod | grep uinput || sudo modprobe uinput
 
 ## 2. Permissions
 
-### `input` group
+The daemon reads `/dev/input/event*` (always `root:input`, mode `0660`) and
+writes `/dev/uinput`. This project deliberately does **not** put your account
+in the `input` group: a package must not edit `/etc/group` for a user it
+cannot know, and a membership only applies at the *next* login anyway.
 
-`/dev/input/event*` is `root:input` with mode `0660`, so your user must be in
-the `input` group:
-
-```bash
-sudo usermod -aG input "$USER"
-```
-
-**Log out and log back in** (group membership is applied at login), then
-verify:
-
-```bash
-groups
-# expect: … wheel input
-```
-
-### `/dev/uinput`
-
-`/dev/uinput` starts out as `crw------- root root`. A udev rule shipped with
-this project widens it to `crw-rw---- root input`:
+Instead, the shipped udev rule tags both device classes with `uaccess`, which
+is how systemd-logind already hands you `/dev/snd/*`:
 
 ```text
-/etc/udev/rules.d/99-middle-drag-uinput.rules
+/etc/udev/rules.d/70-middle-drag-uaccess.rules
 ```
 
 ```udev
-KERNEL=="uinput", GROUP="input", MODE="0660"
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
+SUBSYSTEM=="input", TAG+="uaccess"
 ```
 
-The installer lays it down and reloads the rules; to do it by hand:
+Two details make that work:
+
+* **the `70-` prefix** — udev applies rules in lexical order, so this file
+  must sort before `71-seat.rules` (promotes an `uaccess`-tagged device to a
+  seat device) and `73-seat-late.rules` (runs the `uaccess` builtin). With a
+  `99-` name the tag would be added too late: on a device's first event —
+  exactly what happens at boot — the builtin has already run without
+  matching.
+* **`OPTIONS+="static_node=uinput"`** — registers `/dev/uinput` in
+  `/run/udev/static_node-tags/uaccess/`, the list logind reads when a session
+  starts. `/dev/uinput` is a static node (`modules.devname`, created by
+  systemd-tmpfiles at boot, before any session exists), so without this
+  option a fresh boot leaves it without an ACL at login. Fedora uses the same
+  option for `/dev/snd/seq` and `/dev/snd/timer`.
+
+`GROUP`/`MODE` are kept for continuity: the node stays `crw-rw---- root
+input`, exactly as before, and that stays the fallback outside a seat
+session.
+
+The installer lays the rule down, reloads it and triggers both device
+classes; to do it by hand:
 
 ```bash
-sudo install -m 0644 udev/99-middle-drag-uinput.rules \
-    /etc/udev/rules.d/99-middle-drag-uinput.rules
+sudo install -m 0644 udev/70-middle-drag-uaccess.rules \
+    /etc/udev/rules.d/70-middle-drag-uaccess.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=misc
-ls -l /dev/uinput
-# expect: crw-rw----. 1 root input 10, 223 …
+sudo udevadm trigger --subsystem-match=input
+getfacl /dev/uinput           # expect: user:YOU:rw- …
+getfacl /dev/input/event3     # expect: user:YOU:rw- …
+ls -l /dev/uinput             # expect: crw-rw----. 1 root input 10, 223 …
 ```
+
+The ACL is granted while your session is running and again at every login —
+no logout is needed to pick it up. Verified on Fedora 44 / GNOME 50.5: after
+a fresh boot, every input node and `/dev/uinput` carried `user:swad:rw-` one
+second after session start, and all three device classes opened with *zero*
+supplementary groups.
 
 ---
 
@@ -92,10 +107,10 @@ What it does:
 ./scripts/install.sh
              │
              ├── preflight: GNOME / Python / evdev / dbus / gi / gdbus,
-             │   /dev/uinput, udev rule, 'input' group   ← nothing is written
+             │   /dev/uinput, udev rule        ← nothing is written
              │   until all of these pass
-             ├── install udev rule            (sudo, only if not present)
-             ├── add you to the 'input' group (sudo, only if not present)
+             ├── install udev rule, reload, trigger   (sudo; grants this
+             │   session its uaccess ACL - no group membership needed)
              ├── install daemon        → ~/.local/bin/middle-drag-daemon.py
              ├── install systemd unit  → ~/.config/systemd/user/
              ├── install extension     → ~/.local/share/gnome-shell/extensions/
@@ -108,8 +123,10 @@ Every step records what it created, so a failure further down rolls those
 files back and exits non-zero - a failed install never leaves half an
 installation behind (exercised by `tests/install_matrix.sh`).
 
-**One logout, not two.** `input` group membership only applies to new
-sessions, so when the script has to add you to the group it prints
+**One logout, and only for the code.** The udev rule grants this session its
+uaccess ACL the moment it is triggered, so device access needs no logout at
+all. What still requires a login is GNOME Shell reloading the extension's
+code, so the script prints
 
 ```text
 ACTION REQUIRED: log out and log back in (once).
@@ -118,12 +135,12 @@ ACTION REQUIRED: log out and log back in (once).
 and leaves the daemon start to that login. Everything else (extension
 enabled, unit enabled) is already in place; there is no second pass.
 
-Root is needed only for the udev rule and the group. The script asks once,
+Root is needed only for the udev rule. The script asks once,
 non-interactively, and refuses up front if it cannot get it. Other flags:
 
 | flag | purpose |
 | ---- | ------- |
-| `--user-only` | skip the root steps (udev rule, `input` group) - the daemon then cannot open the mouse, see [troubleshooting](troubleshooting.md) |
+| `--user-only` | skip the root steps (udev rule) - the daemon then cannot open the mouse, see [troubleshooting](troubleshooting.md) |
 | `--no-start` | install and enable everything but do not start the daemon |
 | `--no-systemd` | do not touch systemd at all (used by `tests/install_matrix.sh`) |
 | `--help` | full usage |
@@ -182,7 +199,6 @@ every account. With it, preset resolves to `enabled` and a symlink appears in
 A package still cannot act inside *your* session, so afterwards:
 
 ```bash
-sudo usermod -aG input "$USER"                        # applies at the NEXT login
 gnome-extensions enable middle-drag-gestures@swad     # immediate
 systemctl --user start middle-drag-daemon.service     # immediate; already enabled
 ```
@@ -190,21 +206,24 @@ systemctl --user start middle-drag-daemon.service     # immediate; already enabl
 `start` only covers the current session - the next login starts the daemon
 by itself.
 
-**Do not skip the `input` group.** `dnf install` does not add you to it, and
-without it the daemon cannot open `/dev/input` or `/dev/uinput` (both are
-`root:input`). Everything looks fine until your next login, and then the
-daemon fails with `permission denied on /dev/input/…` — the current session
-may still work if your shell inherited the group from an earlier login.
+**No account changes are needed.** `dnf install` does not touch your groups,
+and it does not have to: the packaged rule tags `/dev/uinput` and every input
+device with `uaccess`, so logind grants the session its ACL when you log in -
+the daemon opens both device classes with zero supplementary groups. (Older
+releases relied on `sudo usermod -aG input "$USER"`; if you still carry that
+membership it is simply redundant now, and the package leaves it alone.)
 
 > **Verified** on Fedora 44 / GNOME Shell 50.5 (2026-10-03): `rpmbuild`
 > completed with no unpackaged files, `rpm -V` clean after install, the udev
-> rule really fired (`/dev/uinput` → `0660 root:input`), `gsettings` resolved
-> the system schema (`threshold = 100`), the extension reached
-> `State: ACTIVE` in a running Shell, and the daemon grabbed the mouse and
-> answered `GetStatus` over D-Bus. Installing a second time after
-> `dnf remove` reproduced all of it. The preset's effect was checked with
-> `systemctl --root … --global preset` in a throwaway root: `disabled`
-> without the preset file, `enabled` with it.
+> rule really fired (`/dev/uinput` → `0660 root:input`, and one second after
+> login the session held `user:swad:rw-` on `/dev/uinput` and on all 20 input
+> nodes; `setpriv --clear-groups` then opened uinput, a keyboard and a mouse
+> with zero supplementary groups), `gsettings` resolved the system schema
+> (`threshold = 100`), the extension reached `State: ACTIVE` in a running
+> Shell, and the daemon grabbed the mouse and answered `GetStatus` over
+> D-Bus. Installing a second time after `dnf remove` reproduced all of it.
+> The preset's effect was checked with `systemctl --root … --global preset`
+> in a throwaway root: `disabled` without the preset file, `enabled` with it.
 
 ---
 
@@ -238,10 +257,11 @@ install -D -m 0644 daemon/middle-drag-daemon.service \
 systemctl --user daemon-reload
 
 # 5. udev rule (root)
-sudo install -m 0644 udev/99-middle-drag-uinput.rules \
-    /etc/udev/rules.d/99-middle-drag-uinput.rules
+sudo install -m 0644 udev/70-middle-drag-uaccess.rules \
+    /etc/udev/rules.d/70-middle-drag-uaccess.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=misc
+sudo udevadm trigger --subsystem-match=input
 
 # 6. enable
 gnome-extensions enable $UUID

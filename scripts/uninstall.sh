@@ -28,8 +28,12 @@ DAEMON_DST="${HOME}/.local/bin/middle-drag-daemon.py"
 UNIT_DST="${HOME}/.config/systemd/user/middle-drag-daemon.service"
 SCHEMA_XML="${HOME}/.local/share/glib-2.0/schemas/${SCHEMA_ID}.gschema.xml"
 SCHEMA_DST_DIR="${HOME}/.local/share/glib-2.0/schemas"
-UDEV_DST="/etc/udev/rules.d/99-middle-drag-uinput.rules"
+UDEV_DST="/etc/udev/rules.d/70-middle-drag-uaccess.rules"
+# Two earlier releases shipped other names for the same rule; an upgrade must
+# not leave a second rule file in charge, so both are cleaned up (identified
+# by their content, never by name alone).
 UDEV_LEGACY="/etc/udev/rules.d/99-uinput.rules"
+UDEV_PREV="/etc/udev/rules.d/99-middle-drag-uinput.rules"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/middle-drag-gestures"
 
 PURGE=0
@@ -41,7 +45,7 @@ die() {
 }
 
 usage() {
-    sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 as_root() {
@@ -176,28 +180,26 @@ step "Removing the udev rule"
 
 removed_udev=0
 if [ "$HAVE_ROOT" = 0 ]; then
-    if [ -f "$UDEV_DST" ] || [ -f "$UDEV_LEGACY" ]; then
+    if [ -f "$UDEV_DST" ] || [ -f "$UDEV_LEGACY" ] || [ -f "$UDEV_PREV" ]; then
         info "SKIPPED: cannot elevate privileges from this shell."
         info "remove it manually:"
-        info "  sudo rm -f $UDEV_DST $UDEV_LEGACY"
+        info "  sudo rm -f $UDEV_DST $UDEV_LEGACY $UDEV_PREV"
         info "  sudo udevadm control --reload-rules"
         SKIPPED+=("udev rule (needs sudo)")
     else
         info "no udev rule installed"
     fi
 else
-    if [ -f "$UDEV_DST" ]; then
-        as_root rm -f "$UDEV_DST"
-        info "removed $UDEV_DST"
-        removed_udev=1
-    fi
-    # The pre-project file used this name; only remove it if it is ours.
-    if [ -f "$UDEV_LEGACY" ] &&
-       grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
-        as_root rm -f "$UDEV_LEGACY"
-        info "removed legacy $UDEV_LEGACY"
-        removed_udev=1
-    fi
+    # Only ever delete files that really are ours: every candidate is matched
+    # by content, never by name alone, so an unrelated file that happens to
+    # share one of these names is left untouched.
+    for rule in "$UDEV_DST" "$UDEV_PREV" "$UDEV_LEGACY"; do
+        if [ -f "$rule" ] && grep -q 'KERNEL=="uinput"' "$rule" 2>/dev/null; then
+            as_root rm -f "$rule"
+            info "removed $rule"
+            removed_udev=1
+        fi
+    done
 
     if [ "$removed_udev" = 1 ]; then
         as_root udevadm control --reload-rules
@@ -218,6 +220,27 @@ else
         else
             info "warning: could not restore /dev/uinput to $STATE_UINPUT_PERMS"
             SKIPPED+=("/dev/uinput permissions")
+        fi
+    fi
+
+    # Same for the uaccess ACL: deleting the rule does not recompute it, so
+    # it stays on the nodes until the next session change.  Strip THIS user's
+    # entries to make the removal visible at once; other sessions keep theirs
+    # and lose them when those sessions end.
+    if [ "$removed_udev" = 1 ] && command -v setfacl >/dev/null 2>&1 &&
+       command -v getfacl >/dev/null 2>&1; then
+        stripped=0
+        for node in /dev/uinput /dev/input/event*; do
+            [ -e "$node" ] || continue
+            if getfacl -cp "$node" 2>/dev/null |
+               grep -qE "^user:${CURRENT_USER}:"; then
+                if as_root setfacl -x "u:$CURRENT_USER" "$node" 2>/dev/null; then
+                    stripped=$((stripped + 1))
+                fi
+            fi
+        done
+        if [ "$stripped" -gt 0 ]; then
+            info "revoked the uaccess ACL on $stripped node(s) for '$CURRENT_USER'"
         fi
     fi
 fi

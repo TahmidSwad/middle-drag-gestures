@@ -147,11 +147,25 @@ The daemon keeps working with built-in defaults until then.
 
 ### `permission denied on /dev/input/…`
 
+Access comes from the uaccess ACL, not from a group membership:
+
 ```bash
-groups | tr ' ' '\n' | grep -x input || sudo usermod -aG input "$USER"
+getfacl /dev/input/event3 | grep user:    # expect: user:YOU:rw- …
+ls -l /etc/udev/rules.d/ | grep middle     # expect: 70-middle-drag-uaccess.rules
 ```
 
-Log out and back in afterwards.
+If the rule is missing, reinstall it (see
+[installation](installation.md#2-permissions)). If it is present but the ACL
+is not, re-evaluate the devices - the grant then happens immediately for the
+running session, or at the next login:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=input
+```
+
+Older releases used `sudo usermod -aG input "$USER"`; that membership still
+works and is left untouched.
 
 ### `… is already grabbed by another process (a second daemon?)`
 
@@ -171,16 +185,18 @@ process exits.
 
 ```bash
 ls -l /dev/uinput        # expect: crw-rw---- root input
+getfacl /dev/uinput | grep user:   # expect: user:YOU:rw- (the uaccess ACL)
 lsmod | grep uinput || sudo modprobe uinput
 ```
 
 Reinstall the udev rule (needs a terminal for sudo):
 
 ```bash
-sudo install -m 0644 udev/99-middle-drag-uinput.rules \
-    /etc/udev/rules.d/99-middle-drag-uinput.rules
+sudo install -m 0644 udev/70-middle-drag-uaccess.rules \
+    /etc/udev/rules.d/70-middle-drag-uaccess.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=misc
+sudo udevadm trigger --subsystem-match=input
 ```
 
 ### The mouse disappears when the daemon starts

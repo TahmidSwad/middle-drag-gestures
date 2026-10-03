@@ -8,7 +8,7 @@
 #   ~/.local/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml
 #   ~/.local/bin/middle-drag-daemon.py
 #   ~/.config/systemd/user/middle-drag-daemon.service
-#   /etc/udev/rules.d/99-middle-drag-uinput.rules      (root, via sudo)
+#   /etc/udev/rules.d/70-middle-drag-uaccess.rules     (root, via sudo)
 #
 # Contract (this is the shipping installer):
 #
@@ -16,14 +16,15 @@
 #     check runs before a single byte is written, so a failed check can never
 #     leave a half-installed system behind
 #   * single pass     - one run, then at most ONE logout/login (GNOME loads
-#     extension code and supplementary groups only at login)
+#     extension code only at login; device access needs no logout at all - the
+#     udev rule's uaccess ACL is granted to the running session)
 #   * idempotent      - safe to re-run after every code change; already
 #     correct steps are detected and skipped
 #
 # Usage:
 #   ./scripts/install.sh [--user-only] [--no-start] [--no-systemd] [--help]
 #
-#   --user-only  skip every root step (modprobe, udev rule, input group).
+#   --user-only  skip every root step (modprobe, udev rule).
 #                Intended for CI/tests: the daemon cannot work until the
 #                privileged steps have been performed.
 #   --no-start   install and enable everything but do not start the daemon,
@@ -52,9 +53,12 @@ UNIT_SRC="$PROJECT_DIR/daemon/middle-drag-daemon.service"
 UNIT_DST="${HOME}/.config/systemd/user/middle-drag-daemon.service"
 SCHEMA_SRC="$EXT_SRC/schemas/${SCHEMA_ID}.gschema.xml"
 SCHEMA_DST_DIR="${HOME}/.local/share/glib-2.0/schemas"
-UDEV_SRC="$PROJECT_DIR/udev/99-middle-drag-uinput.rules"
-UDEV_DST="/etc/udev/rules.d/99-middle-drag-uinput.rules"
+UDEV_SRC="$PROJECT_DIR/udev/70-middle-drag-uaccess.rules"
+UDEV_DST="/etc/udev/rules.d/70-middle-drag-uaccess.rules"
 UDEV_LEGACY="/etc/udev/rules.d/99-uinput.rules"
+# Earlier releases shipped this rule under an older name; an upgrade must not
+# leave a second rule file in charge, so it is removed by content below.
+UDEV_PREV="/etc/udev/rules.d/99-middle-drag-uinput.rules"
 
 # Called before anything has been written: the system is untouched.
 fail_preflight() {
@@ -73,7 +77,7 @@ die() {
 }
 
 usage() {
-    sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # ---------------------------------------------------------------------------
@@ -85,7 +89,6 @@ usage() {
 # up with nothing - and that is stated explicitly in the failure message.
 # ---------------------------------------------------------------------------
 CREATED=()
-GROUP_ADDED=0
 UDEV_CREATED=0
 ORIG_UINPUT_PERMS=""
 ROLLING_BACK=0
@@ -106,8 +109,7 @@ rollback() {
     ROLLING_BACK=1
     trap - ERR
 
-    if [ "${#CREATED[@]}" -eq 0 ] && [ "$GROUP_ADDED" = 0 ] &&
-       [ "$UDEV_CREATED" = 0 ]; then
+    if [ "${#CREATED[@]}" -eq 0 ] && [ "$UDEV_CREATED" = 0 ]; then
         printf '\nNothing had been changed yet - nothing to undo.\n' >&2
         return 0
     fi
@@ -125,17 +127,6 @@ rollback() {
     if [ -d "$SCHEMA_DST_DIR" ] &&
        [ ! -f "$SCHEMA_DST_DIR/${SCHEMA_ID}.gschema.xml" ]; then
         glib-compile-schemas "$SCHEMA_DST_DIR" >/dev/null 2>&1 || true
-    fi
-
-    if [ "$GROUP_ADDED" = 1 ]; then
-        if gpasswd -d "$CURRENT_USER" input 2>/dev/null ||
-           sudo -n gpasswd -d "$CURRENT_USER" input 2>/dev/null; then
-            printf "  removed '%s' from the input group\n" "$CURRENT_USER" >&2
-        else
-            printf "  warning: could not remove '%s' from the input group\n" \
-                "$CURRENT_USER" >&2
-        fi
-        GROUP_ADDED=0
     fi
 
     if [ "$UDEV_CREATED" = 1 ]; then
@@ -176,7 +167,9 @@ trap on_unexpected_error ERR
 # Written only after a fully successful install.  It records what this
 # product changed outside the user's own files, so `uninstall.sh --purge`
 # can undo exactly that - and nothing that was already there (a pre-existing
-# 'input' group membership is never removed).
+# 'input' group membership is never removed).  Releases up to this one added
+# the user to the 'input' group; this one never does, but the flag is carried
+# forward so an older install's membership stays removable.
 # ---------------------------------------------------------------------------
 write_state() {
     local prev_group prev_perms version new_group
@@ -188,8 +181,9 @@ write_state() {
     # applied when this run started, the value just measured is ours.
     ORIG_UINPUT_PERMS="${prev_perms:-$ORIG_UINPUT_PERMS}"
 
+    # Only ever preserve a flag written by an older install.
     new_group=0
-    if [ "$GROUP_ADDED" = 1 ] || [ "${prev_group:-0}" = 1 ]; then
+    if [ "${prev_group:-0}" = 1 ]; then
         new_group=1
     fi
 
@@ -204,7 +198,7 @@ EOF
 }
 
 
-# Root helper: only udev rules, usermod and modprobe need privileges.
+# Root helper: only udev rules and modprobe need privileges.
 as_root() {
     if [ "$(id -u)" = 0 ]; then
         "$@"
@@ -282,8 +276,6 @@ fi
 NEED_ROOT=()
 [ -e /dev/uinput ] || NEED_ROOT+=("/dev/uinput is missing (modprobe uinput)")
 [ -f "$UDEV_DST" ] || NEED_ROOT+=("udev rule $UDEV_DST is not installed")
-id -nG "$CURRENT_USER" | grep -qw input ||
-    NEED_ROOT+=("user '$CURRENT_USER' is not in the 'input' group")
 
 HAVE_ROOT=0
 SKIPPED=()
@@ -348,44 +340,34 @@ else
     info "installed $UDEV_DST"
 
     as_root udevadm control --reload-rules
+    # misc re-evaluates /dev/uinput, input re-evaluates every input node:
+    # both receive the uaccess tag - and, while a session is active, the ACL -
+    # without waiting for the next event or the next login.
     as_root udevadm trigger --subsystem-match=misc
+    as_root udevadm trigger --subsystem-match=input
     info "udev rules reloaded"
 fi
 
-if [ "$HAVE_ROOT" = 1 ] && [ -f "$UDEV_LEGACY" ] &&
-   grep -q 'KERNEL=="uinput"' "$UDEV_LEGACY" 2>/dev/null; then
-    as_root rm -f "$UDEV_LEGACY"
-    info "removed legacy $UDEV_LEGACY"
-fi
+# Earlier releases shipped this rule under two other names; remove them so a
+# re-run never leaves two rule files in charge.  Every candidate is matched by
+# content, never by name alone.
+for old_rule in "$UDEV_PREV" "$UDEV_LEGACY"; do
+    if [ "$HAVE_ROOT" = 1 ] && [ -f "$old_rule" ] &&
+       grep -q 'KERNEL=="uinput"' "$old_rule" 2>/dev/null; then
+        as_root rm -f "$old_rule"
+        info "removed legacy $old_rule"
+    fi
+done
 
 if [ -e /dev/uinput ]; then
     info "/dev/uinput: $(ls -l /dev/uinput | awk '{print $1, $3, $4}')"
 fi
-
-# ---------------------------------------------------------------------------
-# 2. input group membership
-#
-# The daemon opens /dev/input/event* (0660 root:input, set by the distro's
-# 50-udev-default.rules) and /dev/uinput (0660 root:input, set by our rule).
-# Supplementary groups only apply to NEW sessions, so a membership added here
-# takes effect at the next login - which the user already needs for GNOME to
-# reload extension.js.  That is why this installer never asks for a second run.
-# ---------------------------------------------------------------------------
-step "Checking input group membership"
-
-GROUP_ADDED=0
-if id -nG "$CURRENT_USER" | grep -qw input; then
-    info "user '$CURRENT_USER' is in the input group"
-elif [ "$USER_ONLY" = 1 ]; then
-    info "warning: '$CURRENT_USER' is not in the input group; the daemon cannot work"
-else
-    info "adding '$CURRENT_USER' to the input group"
-    as_root usermod -aG input "$CURRENT_USER"
-    GROUP_ADDED=1
+if [ "$HAVE_ROOT" = 1 ]; then
+    info "session access comes from the uaccess ACL - no group membership needed"
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Daemon + systemd user service
+# 2. Daemon + systemd user service
 # ---------------------------------------------------------------------------
 step "Installing the input daemon"
 
@@ -406,7 +388,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. GNOME extension + GSettings schema
+# 3. GNOME extension + GSettings schema
 # ---------------------------------------------------------------------------
 step "Installing the GNOME Shell extension"
 
@@ -483,7 +465,7 @@ fi
 info "user schema installed and readable ($SCHEMA_DST_DIR)"
 
 # ---------------------------------------------------------------------------
-# 5. Enable everything
+# 4. Enable everything
 # ---------------------------------------------------------------------------
 step "Enabling extension and daemon"
 
@@ -504,11 +486,6 @@ if [ "$NO_SYSTEMD" = 1 ]; then
     info "systemd untouched (--no-systemd): no daemon-reload, enable or start"
 elif ! mdg_session_writable; then
     mdg_session_skip "enabling and starting middle-drag-daemon.service"
-elif [ "$GROUP_ADDED" = 1 ]; then
-    systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
-        die "could not enable middle-drag-daemon.service"
-    info "daemon enabled; it starts automatically at the next login"
-    info "(the 'input' group only applies to new sessions)"
 elif [ "$NO_START" = 1 ]; then
     systemctl --user enable middle-drag-daemon.service >/dev/null 2>&1 ||
         die "could not enable middle-drag-daemon.service"
@@ -525,7 +502,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Summary
+# 5. Summary
 # ---------------------------------------------------------------------------
 # Everything succeeded: record what was changed outside the user's files so
 # `uninstall.sh --purge` can undo exactly that.
@@ -539,8 +516,6 @@ if [ "${#SKIPPED[@]}" -gt 0 ]; then
     printf '%s\n' "Skipped, so the daemon will not work until you run:"
     for reason in "${SKIPPED[@]}"; do printf '  - %s\n' "$reason"; done
     printf '%s\n' "Re-run this installer from a terminal with sudo."
-elif [ "$GROUP_ADDED" = 1 ]; then
-    printf '%s\n' "Middle-Drag Gestures installed. The daemon starts at next login."
 elif [ "$NO_SYSTEMD" = 1 ]; then
     printf '%s\n' "Middle-Drag Gestures installed (systemd untouched: the unit was"
     printf '%s\n' "not enabled or started - that is what --no-systemd means)."
@@ -558,9 +533,6 @@ fi
 
 # What actually requires the single relogin?
 RELOGIN=()
-if [ "$GROUP_ADDED" = 1 ]; then
-    RELOGIN+=("'input' group membership applies to new sessions only")
-fi
 if [ "$EXT_CHANGED" = 1 ]; then
     RELOGIN+=("GNOME Shell loads extension code only at login")
 fi

@@ -124,7 +124,8 @@ working tree in a throwaway HOME (your real dconf is never written).
 
 * Fedora 44 (or similar) with GNOME Shell 50 on Wayland
 * `python3`, `python3-evdev`, `python3-dbus`, `python3-gobject`
-* User member of the `input` group
+* No `input` group membership needed - the shipped udev rule grants the
+  session access through a per-login `uaccess` ACL
 * `uinput` kernel module loaded
 
 ## License

@@ -44,8 +44,9 @@ EXT_DST="${HOME}/.local/share/gnome-shell/extensions/$UUID"
 DAEMON_DST="${HOME}/.local/bin/middle-drag-daemon.py"
 UNIT_DST="${HOME}/.config/systemd/user/middle-drag-daemon.service"
 SCHEMA_XML="${HOME}/.local/share/glib-2.0/schemas/${SCHEMA_ID}.gschema.xml"
-UDEV_DST="/etc/udev/rules.d/99-middle-drag-uinput.rules"
+UDEV_DST="/etc/udev/rules.d/70-middle-drag-uaccess.rules"
 UDEV_LEGACY="/etc/udev/rules.d/99-uinput.rules"
+UDEV_PREV="/etc/udev/rules.d/99-middle-drag-uinput.rules"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/middle-drag-gestures"
 
 PURGE=0
@@ -116,6 +117,7 @@ fi   # want_script
 if want_system; then
 for sys in \
     "/usr/libexec/middle-drag-daemon" \
+    "/usr/lib/udev/rules.d/70-middle-drag-uaccess.rules" \
     "/usr/lib/udev/rules.d/99-middle-drag-uinput.rules" \
     "/usr/share/gnome-shell/extensions/middle-drag-gestures@swad" \
     "/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml"; do
@@ -153,7 +155,7 @@ fi   # want_system
 
 # --- udev (script install writes to /etc, the RPM to /usr/lib/udev) --------
 if want_script; then
-for rule in "$UDEV_DST" "$UDEV_LEGACY"; do
+for rule in "$UDEV_DST" "$UDEV_PREV" "$UDEV_LEGACY"; do
     if [ -f "$rule" ]; then
         if grep -q 'KERNEL=="uinput"' "$rule" 2>/dev/null; then
             fail "udev rule still installed: $rule"
@@ -313,6 +315,25 @@ fi
 # when the state file says we added it.
 if id -nG "$CURRENT_USER" 2>/dev/null | grep -qw input; then
     note "'$CURRENT_USER' is in the 'input' group (uninstall keeps a\n        membership it cannot prove it added)"
+fi
+
+# --- uaccess ACL on the device nodes (informational) -----------------------
+# Removing the udev rule does not recompute the ACL logind already granted:
+# it stays on the nodes until the next session change (usually a reboot).
+# uninstall.sh strips the current user's entries when it can, so anything
+# left here belongs to another session or an older run - a note, never a
+# failure, because /dev is runtime state and not owned by any install path.
+if command -v getfacl >/dev/null 2>&1; then
+    acl_leftovers=""
+    for node in /dev/uinput /dev/input/event*; do
+        [ -e "$node" ] || continue
+        if getfacl -cp "$node" 2>/dev/null | grep -qE "^user:${CURRENT_USER}:"; then
+            acl_leftovers="$acl_leftovers $node"
+        fi
+    done
+    if [ -n "$acl_leftovers" ]; then
+        note "uaccess ACL for '$CURRENT_USER' still on:$acl_leftovers (clears at the next session change)"
+    fi
 fi
 
 # --- summary ----------------------------------------------------------------

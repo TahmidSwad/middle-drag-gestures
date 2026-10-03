@@ -54,7 +54,7 @@ companion `evdev`/`uinput` daemon).
   `systemctl --root … --global preset` in a throwaway root - `disabled`
   before the preset file, `enabled` and linked from
   `/etc/systemd/user/graphical-session.target.wants/` after it.
-- udev rule `udev/99-middle-drag-uinput.rules`.
+- udev rule `udev/70-middle-drag-uaccess.rules`.
 - Documentation: architecture, installation, troubleshooting.
 - Unit tests for gesture detection and device discovery.
 - `verify-clean.sh --scope=script|system|all` (default `all`). The two
@@ -66,13 +66,32 @@ companion `evdev`/`uinput` daemon).
 
 ### Changed
 
+- Device access no longer goes through the `input` group: the udev rule
+  (renamed `99-middle-drag-uinput.rules` → `70-middle-drag-uaccess.rules`)
+  now tags `/dev/uinput` and every input device with `uaccess`, so systemd-logind
+  grants the active local session an ACL - no `/etc/group` edit for a package
+  to make, and nothing that only applies at the next login. Two details are
+  required and are documented in the rule itself: the `70-` prefix, so the tag
+  exists before `71-seat.rules`/`73-seat-late.rules` evaluate it (a `99-` name
+  added it too late and missed a device's first event, i.e. every fresh boot),
+  and `OPTIONS+="static_node=uinput"`, which puts the node in
+  `/run/udev/static_node-tags/uaccess/` for logind's login-time pass - the
+  mechanism Fedora already uses for `/dev/snd/seq` and `/dev/snd/timer`.
+  Verified after a fresh boot: `/dev/uinput` and all 20 input nodes carried
+  `user:swad:rw-` one second after session start, and uinput, keyboard and
+  mouse opened with zero supplementary groups (`setpriv --clear-groups`).
+  Installer, uninstaller, `verify-clean.sh` and the docs follow suit; a
+  membership added by an older install is left alone, and
+  `uninstall.sh --purge` still drops it when the state file says we added it.
 - D-Bus methods `OverviewUp`/`OverviewDown` renamed to `ShowOverview`/
   `HideOverview`. The daemon retries under the old name when the running
   Shell still exports the pre-rename code, so vertical gestures keep working
   across an upgrade without waiting for the next login.
 - Daemon now talks to D-Bus through `dbus-python` instead of spawning `gdbus`
   for every call.
-- udev rule renamed from `99-uinput.rules` to `99-middle-drag-uinput.rules`.
+- udev rule renamed from `99-uinput.rules` to `70-middle-drag-uaccess.rules`
+  (it first passed through an intermediate `99-middle-drag-uinput.rules`
+  name, which the installers still clean up as a legacy path).
 - `install.sh` preflights **all** checks before writing anything: a missing
   dependency, or root needed where `sudo` cannot ask for a password, now fails
   with instructions and an untouched home directory instead of skipping a step

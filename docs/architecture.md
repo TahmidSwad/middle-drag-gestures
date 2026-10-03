@@ -223,7 +223,7 @@ The runtime footprint is:
 ~/.local/share/glib-2.0/schemas/org.gnome.shell.extensions.middle-drag.gschema.xml
 ~/.local/bin/middle-drag-daemon.py
 ~/.config/systemd/user/middle-drag-daemon.service
-/etc/udev/rules.d/99-middle-drag-uinput.rules
+/etc/udev/rules.d/70-middle-drag-uaccess.rules
 ```
 
 ---
