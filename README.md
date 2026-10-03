@@ -50,8 +50,7 @@ middle-drag-gestures/
 ├── docs/                                  architecture, installation, troubleshooting
 ├── packaging/fedora/                      RPM spec (ships the whole product)
 ├── tests/                                 unit, integration and install-matrix tests
-├── CHANGELOG.md
-└── plan.md                                original design document
+└── CHANGELOG.md
 ```
 
 ## Quick start
@@ -142,7 +141,6 @@ See [docs/installation.md](docs/installation.md) for manual installation and
 * [docs/architecture.md](docs/architecture.md) — why the design looks like this
 * [docs/installation.md](docs/installation.md) — dependencies, permissions, installer
 * [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and fixes
-* [plan.md](plan.md) — the original design document
 
 ## Development
 
