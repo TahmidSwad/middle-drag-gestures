@@ -59,7 +59,7 @@ middle-drag-gestures/
 ### As an end user (release RPM)
 
 ```bash
-sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.0/middle-drag-gestures-0.1.0-1.fc44.noarch.rpm
+sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.1/middle-drag-gestures-0.1.1-1.fc44.noarch.rpm
 gnome-extensions enable middle-drag-gestures@swad
 ```
 
@@ -87,9 +87,9 @@ The extension is also listed on
 GNOME half — the daemon still needs one root run:
 
 ```bash
-curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.0.tar.gz
+curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.1.tar.gz
 tar -xzf /tmp/middle-drag-gestures.tar.gz -C /tmp
-bash /tmp/middle-drag-gestures-0.1.0/scripts/install.sh
+bash /tmp/middle-drag-gestures-0.1.1/scripts/install.sh
 ```
 
 `install.sh` verifies every dependency before writing a byte and prints the

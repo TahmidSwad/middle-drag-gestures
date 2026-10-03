@@ -204,7 +204,7 @@ Or skip the build entirely: install the `.rpm` asset attached to each
 [GitHub release](https://github.com/TahmidSwad/middle-drag-gestures/releases):
 
 ```bash
-sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.0/middle-drag-gestures-0.1.0-1.fc44.noarch.rpm
+sudo dnf install https://github.com/TahmidSwad/middle-drag-gestures/releases/download/v0.1.1/middle-drag-gestures-0.1.1-1.fc44.noarch.rpm
 ```
 
 The unit **enables itself**. Fedora's default policy for user units is

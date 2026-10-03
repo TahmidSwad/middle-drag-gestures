@@ -35,10 +35,10 @@ const INSTALL_COMMAND = [
     '#    Fedora:       sudo dnf install python3-evdev python3-dbus python3-gobject',
     '#    Debian/Ubuntu: sudo apt install python3-evdev python3-dbus python3-gi libglib2.0-bin',
     '# 2. install (udev rule + systemd unit + extension + schema, then starts the daemon):',
-    'curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.0.tar.gz',
+    'curl -fsSL -o /tmp/middle-drag-gestures.tar.gz https://github.com/TahmidSwad/middle-drag-gestures/archive/refs/tags/v0.1.1.tar.gz',
     'tar -xzf /tmp/middle-drag-gestures.tar.gz -C /tmp',
-    'less /tmp/middle-drag-gestures-0.1.0/scripts/install.sh   # optional: read it first',
-    'bash /tmp/middle-drag-gestures-0.1.0/scripts/install.sh',
+    'less /tmp/middle-drag-gestures-0.1.1/scripts/install.sh   # optional: read it first',
+    'bash /tmp/middle-drag-gestures-0.1.1/scripts/install.sh',
 ].join('\n');
 
 

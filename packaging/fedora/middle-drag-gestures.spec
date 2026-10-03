@@ -36,8 +36,8 @@
 #   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 #
 #   # offline, straight from a checkout:
-#   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.0/ \
-#     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.0.tar.gz HEAD
+#   git archive --format=tar.gz --prefix=middle-drag-gestures-0.1.1/ \
+#     -o ~/rpmbuild/SOURCES/middle-drag-gestures-0.1.1.tar.gz HEAD
 #   rpmbuild -ba packaging/fedora/middle-drag-gestures.spec
 #
 # systemd-rpm-macros supplies _userunitdir, _udevrulesdir and the
@@ -77,7 +77,7 @@
 %global extensiondir %{_datadir}/gnome-shell/extensions/%{uuid}
 
 Name:           middle-drag-gestures
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        System-wide middle-mouse drag gestures for GNOME on Wayland
 
@@ -217,6 +217,11 @@ fi
 %{_datadir}/glib-2.0/schemas/%{schema_id}.gschema.xml
 
 %changelog
+* Sat Oct 03 2026 Swad <swad@localhost> - 0.1.1-1
+- Preferences window reports daemon status and shows the install commands
+- LICENSE included in the extension bundle
+- Install instructions and dependency names for non-Fedora distributions
+
 * Sat Oct 03 2026 Swad <swad@localhost> - 0.1.0-1
 - Initial package: GNOME Shell extension, GSettings schema, input daemon,
   udev rule and systemd user unit (previously the daemon half only)

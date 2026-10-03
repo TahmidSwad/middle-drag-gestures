@@ -4,5 +4,5 @@
   "description": "Middle mouse button + drag switches workspaces and toggles the Overview, like three-finger touchpad gestures.",
   "shell-version": ["50"],
   "settings-schema": "org.gnome.shell.extensions.middle-drag",
-  "version": 1
+  "version": 2
 }
